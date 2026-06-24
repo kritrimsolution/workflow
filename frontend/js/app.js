@@ -33,7 +33,7 @@ const Router = (() => {
         Landing.render();
         break;
       case 'login':
-        Auth.renderLoginPage();
+        Auth.renderLoginPage(param);
         break;
       case 'admin':
         Admin.render();

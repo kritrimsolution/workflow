@@ -37,8 +37,9 @@ const Landing = (() => {
           <button class="nav-link" onclick="Landing.scrollToSection('performance-section')">Performance</button>
           <button class="nav-link" onclick="Landing.scrollToSection('scale-section')">Scale</button>
         </nav>
-        <div class="nav-right">
-          <button class="btn btn-gradient-border btn-sm" onclick="Landing.openPartnerModal()">Request Access</button>
+        <div class="nav-right" style="display: flex; gap: 12px; align-items: center;">
+          <a href="#/login/auto" class="btn btn-gradient-border btn-sm" style="text-decoration: none;">Login</a>
+          <button class="btn btn-primary-gradient btn-sm" onclick="Landing.openPartnerModal()">Request Access</button>
         </div>
       </header>
 

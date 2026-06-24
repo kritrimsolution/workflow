@@ -46,7 +46,21 @@ const Engine = (() => {
 
       const row = {};
 
-      columns.forEach((col, i) => row[col] = vals[i] !== undefined ? vals[i] : '');
+      columns.forEach((col, i) => {
+        let val = vals[i] !== undefined ? vals[i] : '';
+        if (typeof val === 'string' && val.trim() !== '') {
+          const trimmed = val.trim();
+          if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+            if (!(trimmed.length > 1 && trimmed[0] === '0' && trimmed[1] !== '.')) {
+              const num = Number(trimmed);
+              if (!isNaN(num)) {
+                val = num;
+              }
+            }
+          }
+        }
+        row[col] = val;
+      });
 
       return row;
 
@@ -130,13 +144,27 @@ const Engine = (() => {
 
   function evalFormula(formula, row) {
 
+    // Helper to auto-cast values to number representation if they look like simple numbers
+    const getExprValValue = (v) => {
+      if (typeof v === 'string' && v.trim() !== '') {
+        const trimmed = v.trim();
+        if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+          if (!(trimmed.length > 1 && trimmed[0] === '0' && trimmed[1] !== '.')) {
+            const num = Number(trimmed);
+            if (!isNaN(num)) return num;
+          }
+        }
+      }
+      return v;
+    };
+
     // Replace column references like {ColName} with values
 
     let expr = formula.replace(/\{([^}]+)\}/g, (_, col) => {
 
       const v = row[col];
 
-      return v !== undefined ? JSON.stringify(v) : 'null';
+      return v !== undefined ? JSON.stringify(getExprValValue(v)) : 'null';
 
     });
 
@@ -150,7 +178,7 @@ const Engine = (() => {
 
       if (expr.includes(col)) {
 
-        expr = expr.replace(re, JSON.stringify(row[col]));
+        expr = expr.replace(re, JSON.stringify(getExprValValue(row[col])));
 
       }
 
@@ -760,25 +788,64 @@ const Engine = (() => {
         let inputState = null;
 
         if (incoming.length > 0) {
+          const states = incoming.map(inc => nodeStates[inc.from]).filter(Boolean);
+          if (states.length === 1) {
+            inputState = states[0];
+          } else if (states.length > 1) {
+            // Merge multiple incoming parallel states row-by-row
+            let mergedColumns = [];
+            const colSet = new Set();
+            states.forEach(s => {
+              s.columns.forEach(c => {
+                if (!colSet.has(c)) {
+                  colSet.add(c);
+                  mergedColumns.push(c);
+                }
+              });
+            });
 
-          // Find the source state from the first incoming connection
+            let mergedRows = [];
+            const numRows = defaultState.rows.length;
+            for (let r = 0; r < numRows; r++) {
+              let mergedRow = { ...defaultState.rows[r] };
+              mergedColumns.forEach(c => {
+                let chosenVal = undefined;
+                let isModified = false;
+                for (const s of states) {
+                  if (s.rows[r] && c in s.rows[r]) {
+                    const val = s.rows[r][c];
+                    const origVal = defaultState.rows[r] ? defaultState.rows[r][c] : undefined;
+                    if (origVal === undefined || val !== origVal) {
+                      chosenVal = val;
+                      isModified = true;
+                    } else if (chosenVal === undefined) {
+                      chosenVal = val;
+                    }
+                  }
+                }
+                if (chosenVal !== undefined) {
+                  mergedRow[c] = chosenVal;
+                }
+              });
 
-          inputState = nodeStates[incoming[0].from];
-
+              let filteredRow = {};
+              mergedColumns.forEach(c => {
+                if (c in mergedRow) {
+                  filteredRow[c] = mergedRow[c];
+                }
+              });
+              mergedRows.push(filteredRow);
+            }
+            inputState = { columns: mergedColumns, rows: mergedRows };
+          }
         }
 
         // Fallback to default state if no input state is found
-
         if (!inputState) {
-
           inputState = { columns: [...defaultState.columns], rows: defaultState.rows.map(r => ({ ...r })) };
-
         } else {
-
           // Deep copy the input state to avoid mutating previous node states
-
           inputState = { columns: [...inputState.columns], rows: inputState.rows.map(r => ({ ...r })) };
-
         }
 
         const subtype = node.config?.subtype || node.subtype || node.type;
@@ -847,14 +914,21 @@ const Engine = (() => {
 
   // Handles fuzzy column matching against actual data columns
 
-  async function parsePrompt(text, columns = []) {
+  async function parsePrompt(text, columns = [], currentNodes = [], history = [], chatMode = false, currentEdges = []) {
     try {
       const res = await fetch('/api/parse-prompt', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ prompt: text, columns })
+        body: JSON.stringify({
+          prompt: text,
+          columns,
+          current_nodes: currentNodes,
+          current_edges: currentEdges,
+          history,
+          chat_mode: chatMode
+        })
       });
       if (!res.ok) {
         const err = await res.json();
@@ -866,7 +940,14 @@ const Engine = (() => {
       if (window.UI && typeof window.UI.toast === 'function') {
         window.UI.toast(`Using offline parser fallback (LLM failed: ${e.message})`, 'warning');
       }
-      return localRegexParsePrompt(text, columns);
+      const localResult = localRegexParsePrompt(text, columns);
+      if (chatMode) {
+        return {
+          explanation: "Compiled offline using local rules. To support more complex instructions, make sure the backend Gemini service is reachable.",
+          nodes: localResult
+        };
+      }
+      return localResult;
     }
   }
 

@@ -36,6 +36,8 @@ const Canvas = (() => {
   let previewTab = 'original'; // 'original' | 'transformed'
   let uploadedData = null;    // { columns, rows, types, fileName, fileType }
   let _lastRunState = null;
+  let chatHistory = [];
+  let isChatLoading = false;
 
   // Panning State
   let isPanning = false;
@@ -111,6 +113,8 @@ const Canvas = (() => {
     panX = 0;
     panY = 0;
     isDirty = false;
+    chatHistory = [];
+    isChatLoading = false;
     // Start on Data tab if no file uploaded yet, else Nodes
     paletteTab = uploadedData ? 'nodes' : 'data';
     render(wf);
@@ -162,6 +166,7 @@ const Canvas = (() => {
           <div class="palette-tab-strip">
             <button class="palette-tab-btn ${paletteTab==='data'?'active':''}" id="ptab-data" onclick="Canvas._switchPaletteTab('data')">Data</button>
             <button class="palette-tab-btn ${paletteTab==='nodes'?'active':''}" id="ptab-nodes" onclick="Canvas._switchPaletteTab('nodes')">Nodes</button>
+            <button class="palette-tab-btn ${paletteTab==='ai'?'active':''}" id="ptab-ai" onclick="Canvas._switchPaletteTab('ai')">AI Chat</button>
           </div>
 
           <!-- NODES TAB -->
@@ -191,6 +196,22 @@ const Canvas = (() => {
               ${renderDataPanelHTML()}
             </div>
           </div>
+
+          <!-- AI CHAT TAB -->
+          <div id="palette-ai-tab" class="${paletteTab==='ai'?'':'hidden'}" style="display:${paletteTab==='ai'?'flex':'none'};flex:1;flex-direction:column;overflow:hidden;background:var(--surface-trench);">
+            <div class="chat-history" id="chat-history" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:12px;font-size:12px;line-height:1.5;">
+              <div class="chat-message system" style="color:var(--color-fog-veil);font-style:italic;text-align:center;margin-top:20px;">
+                Ask DataFlow AI to build, edit, or modify your workflow steps dynamically!
+              </div>
+            </div>
+            <div class="chat-input-area" style="padding:8px;border-top:1px solid rgba(237,255,254,0.08);background:var(--surface-reef);display:flex;flex-direction:column;gap:8px;">
+              <textarea class="form-input" id="chat-input" placeholder="Type AI instruction... (e.g. 'add column status')" style="resize:none;height:60px;font-size:12px;background:var(--surface-trench);border:1px solid rgba(237,255,254,0.08);border-radius:4px;color:var(--color-snow-sheet);" onkeydown="if(event.key==='Enter' && !event.shiftKey) { event.preventDefault(); Canvas.sendChatMessage(); }"></textarea>
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <button class="btn btn-xs btn-secondary" onclick="Canvas.clearChatHistory()" style="font-size:10px;">Clear</button>
+                <button class="btn btn-xs btn-primary" onclick="Canvas.sendChatMessage()" style="font-size:10px;">Send ➔</button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- CENTER: Canvas + Preview -->
@@ -209,7 +230,7 @@ const Canvas = (() => {
               style="position: absolute; inset: 0; overflow: hidden; cursor: grab;">
               
               <div style="position: relative; width: 3000px; height: 2000px; background: var(--surface-abyss); background-image: radial-gradient(circle, rgba(0, 130, 124, 0.05) 1px, transparent 1px); background-size: 28px 28px;" id="canvas-workspace">
-                <svg class="canvas-svg" id="canvas-svg" xmlns="http://www.w3.org/2000/svg" style="position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;">
+                <svg class="canvas-svg" id="canvas-svg" width="3000" height="2000" xmlns="http://www.w3.org/2000/svg" style="position: absolute; inset: 0; pointer-events: none; overflow: visible;">
                   <g id="edges-g"></g>
                   <path id="temp-edge" class="canvas-edge temp" style="display:none; stroke: var(--color-current-teal); stroke-width: 2px; fill: none;"/>
                 </svg>
@@ -646,12 +667,7 @@ const Canvas = (() => {
   function autoLayout() {
     if (!nodes.length) return;
     pushHistory();
-    const COLS = Math.ceil(Math.sqrt(nodes.length));
-    nodes.forEach((n, i) => {
-      const col = i % COLS;
-      const row = Math.floor(i / COLS);
-      nodePositions[n.id] = { x: 40 + col * 220, y: 60 + row * 130 };
-    });
+    layoutTopologically();
     renderNodes();
     renderEdges();
     markDirty();
@@ -675,23 +691,32 @@ const Canvas = (() => {
     paletteTab = tab;
     const nodesTab = document.getElementById('palette-nodes-tab');
     const dataTab = document.getElementById('palette-data-tab');
-    if (!nodesTab || !dataTab) return;
+    const aiTab = document.getElementById('palette-ai-tab');
+    if (!nodesTab || !dataTab || !aiTab) return;
+    
+    // Hide all
+    nodesTab.style.display = 'none'; nodesTab.classList.add('hidden');
+    dataTab.style.display = 'none'; dataTab.classList.add('hidden');
+    aiTab.style.display = 'none'; aiTab.classList.add('hidden');
+    
+    document.getElementById('ptab-nodes')?.classList.remove('active');
+    document.getElementById('ptab-data')?.classList.remove('active');
+    document.getElementById('ptab-ai')?.classList.remove('active');
+    
     if (tab === 'nodes') {
       nodesTab.style.display = 'flex'; nodesTab.classList.remove('hidden');
-      dataTab.style.display = 'none'; dataTab.classList.add('hidden');
       document.getElementById('ptab-nodes')?.classList.add('active');
-      document.getElementById('ptab-data')?.classList.remove('active');
-    } else {
+    } else if (tab === 'data') {
       dataTab.style.display = 'flex'; dataTab.classList.remove('hidden');
-      nodesTab.style.display = 'none'; nodesTab.classList.add('hidden');
       document.getElementById('ptab-data')?.classList.add('active');
-      document.getElementById('ptab-nodes')?.classList.remove('active');
       refreshDataPanel();
+    } else if (tab === 'ai') {
+      aiTab.style.display = 'flex'; aiTab.classList.remove('hidden');
+      document.getElementById('ptab-ai')?.classList.add('active');
+      renderChatHistory();
     }
   }
 
-
-  // ── Preview tab switch ────────────────────────────────────────
   function _switchPreviewTab(tab) {
     previewTab = tab;
     const orig = document.getElementById('preview-original');
@@ -707,152 +732,382 @@ const Canvas = (() => {
     }
   }
 
-  // ── AI Prompt → Generate Workflow ────────────────────────────
-  function _setPrompt(text) {
-    const inp = document.getElementById('prompt-input');
-    if (inp) { inp.value = text; inp.focus(); }
-  }
-
   function generateFromPrompt() {
     const text = document.getElementById('prompt-input')?.value?.trim();
     if (!text) { UI.toast('Please type what you want to do', 'error'); return; }
+    
+    // Auto-switch to AI tab
+    _switchPaletteTab('ai');
+    
+    // Clear the top prompt bar input
+    const inp = document.getElementById('prompt-input');
+    if (inp) inp.value = '';
+    
+    // Send message
+    sendChatMessage(text);
+  }
+
+  function _setPrompt(text) {
+    const inp = document.getElementById('prompt-input');
+    if (inp) inp.value = text;
+  }
+
+  async function sendChatMessage(overrideText = null) {
+    const inputEl = document.getElementById('chat-input');
+    const text = overrideText || inputEl?.value?.trim();
+    if (!text) return;
+    
+    if (inputEl) inputEl.value = '';
+    
+    chatHistory.push({ role: 'user', content: text });
+    renderChatHistory();
+    
+    isChatLoading = true;
+    renderChatHistory();
+    
+    try {
+      // Pass all nodes (with IDs) and edges for full DAG context
+      const currentNodes = nodes.map(n => ({
+        id: n.id,
+        type: n.type,
+        subtype: n.subtype,
+        label: n.label,
+        config: n.config
+      }));
+      const currentEdges = edges.map(e => ({
+        from: e.from,
+        to: e.to
+      }));
+      
+      const cols = uploadedData ? uploadedData.columns : [];
+      const response = await Engine.parsePrompt(text, cols, currentNodes, chatHistory, true, currentEdges);
+      
+      isChatLoading = false;
+      
+      let explanation = 'Workflow updated successfully.';
+      let newNodes = null;
+
+      if (response) {
+        if (response.nodes && Array.isArray(response.nodes)) {
+          explanation = response.explanation || explanation;
+          newNodes = response.nodes;
+        } else if (Array.isArray(response)) {
+          newNodes = response;
+        } else if (response.type || response.subtype) {
+          newNodes = [response];
+        }
+      }
+
+      if (newNodes) {
+        chatHistory.push({ role: 'model', content: explanation });
+        updateWorkflowWithNodes(newNodes, response ? response.edges : null);
+        UI.toast('Workflow updated successfully!', 'success');
+      } else {
+        chatHistory.push({ role: 'model', content: 'Sorry, I couldn\'t compile the workflow changes. Please try a different instruction.' });
+        UI.toast('Failed to update workflow', 'error');
+      }
+    } catch (e) {
+      isChatLoading = false;
+      chatHistory.push({ role: 'model', content: `Error: ${e.message}` });
+      UI.toast(e.message, 'error');
+    }
+    
+    renderChatHistory();
+  }
+
+  function renderChatHistory() {
+    const histEl = document.getElementById('chat-history');
+    if (!histEl) return;
+    
+    if (chatHistory.length === 0) {
+      histEl.innerHTML = `
+        <div class="chat-message system" style="color:var(--color-fog-veil);font-style:italic;text-align:center;margin-top:20px;">
+          Ask DataFlow AI to build, edit, or modify your workflow steps dynamically!
+        </div>
+      `;
+      return;
+    }
+    
+    let html = `
+      <style>
+        @keyframes bounce {
+          0%, 80%, 100% { transform: scale(0); }
+          40% { transform: scale(1.0); }
+        }
+      </style>
+    `;
+    
+    chatHistory.forEach(msg => {
+      if (msg.role === 'user') {
+        html += `
+          <div class="chat-message user" style="align-self: flex-end; background: rgba(0, 130, 124, 0.15); border: 1px solid rgba(0, 130, 124, 0.3); border-radius: 8px 8px 0 8px; padding: 8px 12px; max-width: 85%; color: var(--color-snow-sheet); word-break: break-word;">
+            ${escHtml(msg.content)}
+          </div>
+        `;
+      } else {
+        html += `
+          <div class="chat-message model" style="align-self: flex-start; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(237, 255, 254, 0.08); border-radius: 8px 8px 8px 0; padding: 8px 12px; max-width: 85%; color: var(--color-ice-mist); word-break: break-word;">
+            <div style="font-weight: 500; font-size: 10px; color: var(--color-current-teal); margin-bottom: 4px; display: flex; align-items: center; gap: 4px;">
+              <span>✦</span><span>DATAFLOW AI</span>
+            </div>
+            ${escHtml(msg.content)}
+          </div>
+        `;
+      }
+    });
+    
+    if (isChatLoading) {
+      html += `
+        <div class="chat-message model loading" style="align-self: flex-start; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(237, 255, 254, 0.08); border-radius: 8px 8px 8px 0; padding: 8px 12px; width: 60px; color: var(--color-ice-mist); display: flex; gap: 4px; justify-content: center; align-items: center;">
+          <span class="spinner-dot" style="width: 6px; height: 6px; background-color: var(--color-current-teal); border-radius: 50%; display: inline-block; animation: bounce 1.4s infinite ease-in-out both; animation-delay: -0.32s;"></span>
+          <span class="spinner-dot" style="width: 6px; height: 6px; background-color: var(--color-current-teal); border-radius: 50%; display: inline-block; animation: bounce 1.4s infinite ease-in-out both; animation-delay: -0.16s;"></span>
+          <span class="spinner-dot" style="width: 6px; height: 6px; background-color: var(--color-current-teal); border-radius: 50%; display: inline-block; animation: bounce 1.4s infinite ease-in-out both;"></span>
+        </div>
+      `;
+    }
+    
+    histEl.innerHTML = html;
+    histEl.scrollTop = histEl.scrollHeight;
+  }
+
+  function clearChatHistory() {
+    chatHistory = [];
+    renderChatHistory();
+  }
+
+  function updateWorkflowWithNodes(newNodesList, newEdgesList = null) {
     pushHistory();
 
-    // Show generating overlay
-    const area = document.getElementById('canvas-area');
-    const overlay = document.createElement('div');
-    overlay.className = 'gen-overlay';
-    overlay.innerHTML = `<div class="gen-spinner"></div><div class="gen-label">Generating workflow…</div>`;
-    area?.appendChild(overlay);
+    const hasSource = newNodesList.some(n => n.type === 'source');
+    const hasOutput = newNodesList.some(n => n.type === 'output');
 
-    setTimeout(async () => {
-      try {
-        isExecutingCompoundAction = true;
-        const cols = uploadedData ? uploadedData.columns : [];
-        const generatedNodes = await Engine.parsePrompt(text, cols);
+    let finalNodes = [];
+    let finalEdges = [];
 
-        if (!generatedNodes.length) {
-          overlay.remove();
-          UI.toast('Could not understand the prompt. Try: "If Age > 60 set Sex to female"', 'error');
-          historyStack.pop();
-          isExecutingCompoundAction = false;
-          return;
+    if (hasSource && hasOutput && newEdgesList) {
+      // Branching DAG case!
+      const currentNodes = [...nodes];
+      const unmatched = [...currentNodes];
+      const idMap = {};
+
+      finalNodes = newNodesList.map(ns => {
+        let matchIdx = -1;
+        // Prioritize exact ID match if preserved by the model
+        if (ns.id) {
+          matchIdx = unmatched.findIndex(c => c.id === ns.id);
+        }
+        if (matchIdx === -1) {
+          if (ns.type === 'source') {
+            matchIdx = unmatched.findIndex(c => c.type === 'source');
+          } else if (ns.type === 'output') {
+            matchIdx = unmatched.findIndex(c => c.type === 'output');
+          } else {
+            matchIdx = unmatched.findIndex(c => c.type !== 'source' && c.type !== 'output' && c.subtype === ns.subtype);
+          }
         }
 
-        // Ensure source node exists if file uploaded
-        let sourceNode = nodes.find(n => n.type === 'source');
-        let startX = 40, startY = 80;
+        let matchedNode = null;
+        if (matchIdx !== -1) {
+          matchedNode = unmatched.splice(matchIdx, 1)[0];
+        }
 
-        if (!sourceNode && uploadedData) {
-          sourceNode = addNode('source', 'csv', startX, startY, {
+        const id = matchedNode ? matchedNode.id : 'n' + Storage.uid();
+        idMap[ns.id] = id;
+
+        return {
+          id,
+          type: ns.type || 'transform',
+          subtype: ns.subtype,
+          label: ns.label || ns.config?.targetColumn || 'Transform',
+          config: ns.config || {}
+        };
+      });
+
+      newEdgesList.forEach(e => {
+        const fromFinal = idMap[e.from];
+        const toFinal = idMap[e.to];
+        if (fromFinal && toFinal) {
+          finalEdges.push({
+            id: 'e' + Storage.uid(),
+            from: fromFinal,
+            to: toFinal
+          });
+        }
+      });
+      
+      nodes = finalNodes;
+      edges = finalEdges;
+
+      const currentIds = new Set(nodes.map(n => n.id));
+      Object.keys(nodePositions).forEach(k => {
+        if (!currentIds.has(k)) {
+          delete nodePositions[k];
+        }
+      });
+
+      layoutTopologically();
+
+    } else {
+      // Linear fallback case (intermediate nodes list only)
+      let sourceNode = nodes.find(n => n.type === 'source');
+      if (!sourceNode && uploadedData) {
+        const id = 'n' + Storage.uid();
+        sourceNode = {
+          id,
+          type: 'source',
+          subtype: 'csv',
+          label: uploadedData.fileName || 'CSV Source',
+          config: {
             subtype: 'csv',
             csvText: [uploadedData.columns.join(','), ...uploadedData.rows.slice(0,5).map(r => uploadedData.columns.map(c => r[c]??'').join(','))].join('\n'),
-          }, `${uploadedData.fileName}`);
-          startX += 220;
-        } else if (sourceNode) {
-          const sp = nodePositions[sourceNode.id];
-          startX = (sp?.x || 40) + 220;
-          startY = sp?.y || 80;
-        }
-
-        // Find last node in chain to connect to
-        let lastNodeId = sourceNode?.id || null;
-        let outputNode = nodes.find(n => n.type === 'output');
-
-        // Find the node currently connected to Output (if any)
-        let predecessorOfOutput = null;
-        if (outputNode) {
-          const incomingToOutput = edges.find(e => e.to === outputNode.id);
-          if (incomingToOutput) {
-            predecessorOfOutput = incomingToOutput.from;
           }
-        }
-
-        // Determine where to connect the start of the new nodes
-        if (predecessorOfOutput) {
-          lastNodeId = predecessorOfOutput;
-          const predPos = nodePositions[predecessorOfOutput];
-          startX = (predPos?.x || 40) + 220;
-          startY = predPos?.y || 80;
-        } else if (nodes.length > 1) {
-          const rightmost = nodes.reduce((best, n) => {
-            if (!best) return n;
-            if (n.type === 'output') return best;
-            const bx = nodePositions[best.id]?.x || 0;
-            const nx = nodePositions[n.id]?.x || 0;
-            return nx > bx ? n : best;
-          }, null);
-          if (rightmost) {
-            lastNodeId = rightmost.id;
-            startX = (nodePositions[rightmost.id]?.x || 40) + 220;
-            startY = nodePositions[rightmost.id]?.y || 80;
-          }
-        }
-
-        // Add generated nodes
-        const newNodeIds = [];
-        generatedNodes.forEach((nodeSpec, i) => {
-          const nx = startX + i * 210;
-          const ny = startY + (i % 2 === 0 ? 0 : 15); // slight stagger
-          const n = addNode(nodeSpec.type, nodeSpec.subtype, nx, ny, nodeSpec.config, nodeSpec.label);
-          n.config = { ...n.config, ...nodeSpec.config };
-          newNodeIds.push(n.id);
-        });
-
-        // Auto-add output node if not present and we generated transforms
-        if (!outputNode && generatedNodes.length > 0) {
-          const lastTx = startX + generatedNodes.length * 210;
-          outputNode = addNode('output', 'csv', lastTx, startY, { subtype:'csv', filename:'output.csv' }, 'CSV Export');
-        }
-
-        // If predecessorOfOutput exists, remove its connection to the output and shift the output
-        if (predecessorOfOutput && outputNode) {
-          edges = edges.filter(e => !(e.from === predecessorOfOutput && e.to === outputNode.id));
-          const lastNewNodeX = startX + (generatedNodes.length - 1) * 210;
-          nodePositions[outputNode.id] = { x: lastNewNodeX + 220, y: startY };
-        }
-
-        // Connect the chain: lastNodeId -> newNodes -> outputNode
-        const connectChain = [lastNodeId, ...newNodeIds].filter(Boolean);
-        if (outputNode && !connectChain.includes(outputNode.id)) {
-          connectChain.push(outputNode.id);
-        }
-
-        connectChain.forEach((fromId, i) => {
-          if (i < connectChain.length - 1) {
-            const toId = connectChain[i + 1];
-            const alreadyConnected = edges.some(e => e.from === fromId && e.to === toId);
-            if (!alreadyConnected) {
-              edges.push({ id: 'e' + Storage.uid(), from: fromId, to: toId });
-            }
-          }
-        });
-
-
-        markDirty();
-        renderNodes(true); // animate new nodes
-        renderEdges();
-        overlay.remove();
-
-        // Show result
-        _switchPreviewTab('original');
-        UI.toast(`Generated ${generatedNodes.length} node${generatedNodes.length!==1?'s':''} — click Run to preview`, 'success');
-
-        // Clear prompt
-        const inp = document.getElementById('prompt-input');
-        if (inp) inp.value = '';
-
-        // Switch to nodes tab
-        _switchPaletteTab('nodes');
-
-      } catch(err) {
-        overlay.remove();
-        UI.toast('Error: ' + err.message, 'error');
-        historyStack.pop();
-      } finally {
-        isExecutingCompoundAction = false;
+        };
       }
-    }, 600);
+
+      let outputNode = nodes.find(n => n.type === 'output');
+      if (!outputNode) {
+        const id = 'n' + Storage.uid();
+        outputNode = {
+          id,
+          type: 'output',
+          subtype: 'csv',
+          label: 'CSV Export',
+          config: { subtype: 'csv', filename: 'output.csv' }
+        };
+      }
+
+      const currentIntermediate = nodes.filter(n => n.type !== 'source' && n.type !== 'output');
+      const unmatched = [...currentIntermediate];
+
+      const processedIntermediateNodes = newNodesList.map(ns => {
+        const matchIdx = unmatched.findIndex(c => c.subtype === ns.subtype);
+        let matchedNode = null;
+        if (matchIdx !== -1) {
+          matchedNode = unmatched.splice(matchIdx, 1)[0];
+        }
+        const id = matchedNode ? matchedNode.id : 'n' + Storage.uid();
+        return {
+          id,
+          type: ns.type || 'transform',
+          subtype: ns.subtype,
+          label: ns.label || ns.config?.targetColumn || 'Transform',
+          config: ns.config || {}
+        };
+      });
+
+      const currentIds = new Set([
+        ...(sourceNode ? [sourceNode.id] : []),
+        ...processedIntermediateNodes.map(n => n.id),
+        ...(outputNode ? [outputNode.id] : [])
+      ]);
+      Object.keys(nodePositions).forEach(k => {
+        if (!currentIds.has(k)) {
+          delete nodePositions[k];
+        }
+      });
+
+      nodes = [];
+      if (sourceNode) nodes.push(sourceNode);
+      processedIntermediateNodes.forEach(n => nodes.push(n));
+      if (outputNode) nodes.push(outputNode);
+
+      edges = [];
+      for (let i = 0; i < nodes.length - 1; i++) {
+        edges.push({
+          id: 'e' + Storage.uid(),
+          from: nodes[i].id,
+          to: nodes[i+1].id
+        });
+      }
+
+      let startX = 40, startY = 80;
+      nodes.forEach((n, i) => {
+        if (nodePositions[n.id]) return;
+        if (i > 0) {
+          const predId = nodes[i - 1].id;
+          const predPos = nodePositions[predId] || { x: startX + (i - 1) * 220, y: startY };
+          nodePositions[n.id] = { x: predPos.x + 220, y: predPos.y };
+        } else {
+          nodePositions[n.id] = { x: startX, y: startY };
+        }
+      });
+    }
+
+    markDirty();
+    renderNodes();
+    renderEdges();
+  }
+
+  function layoutTopologically() {
+    if (!nodes.length) return;
+
+    const level = {};
+    const inDegree = {};
+    const adj = {};
+
+    nodes.forEach(n => {
+      level[n.id] = 0;
+      inDegree[n.id] = 0;
+      adj[n.id] = [];
+    });
+
+    edges.forEach(e => {
+      if (adj[e.from]) adj[e.from].push(e.to);
+      if (inDegree[e.to] !== undefined) inDegree[e.to]++;
+    });
+
+    const queue = nodes.filter(n => inDegree[n.id] === 0);
+    queue.forEach(n => level[n.id] = 0);
+
+    const order = [];
+    const visited = new Set();
+
+    while (queue.length) {
+      const curr = queue.shift();
+      if (visited.has(curr.id)) continue;
+      visited.add(curr.id);
+      order.push(curr);
+
+      const currLevel = level[curr.id];
+      adj[curr.id].forEach(toId => {
+        level[toId] = Math.max(level[toId] || 0, currLevel + 1);
+        inDegree[toId]--;
+        if (inDegree[toId] === 0) {
+          const nextNode = nodes.find(n => n.id === toId);
+          if (nextNode) queue.push(nextNode);
+        }
+      });
+    }
+
+    nodes.forEach(n => {
+      if (!visited.has(n.id)) {
+        level[n.id] = 0;
+      }
+    });
+
+    const nodesByLevel = {};
+    nodes.forEach(n => {
+      const lvl = level[n.id] || 0;
+      if (!nodesByLevel[lvl]) nodesByLevel[lvl] = [];
+      nodesByLevel[lvl].push(n);
+    });
+
+    const startX = 40;
+    const startY = 160; 
+    const spacingX = 220;
+    const spacingY = 130;
+
+    Object.keys(nodesByLevel).sort((a, b) => a - b).forEach(lvl => {
+      const levelNodes = nodesByLevel[lvl];
+      const count = levelNodes.length;
+      levelNodes.forEach((n, idx) => {
+        const offset = (idx - (count - 1) / 2) * spacingY;
+        nodePositions[n.id] = {
+          x: startX + lvl * spacingX,
+          y: startY + offset
+        };
+      });
+    });
   }
 
   // ── Render nodes ──────────────────────────────────────────────
@@ -2255,6 +2510,7 @@ const Canvas = (() => {
     runWorkflow, downloadOutput,
     saveWorkflow, publish, shareLink, undo, clearCanvas, autoLayout,
     generateFromPrompt, _setPrompt,
+    sendChatMessage, clearChatHistory,
     _paletteDragStart, _drop,
     _colChipDragStart, _fileDrop, _fileInputChange,
     clearFile, _addAllAsSource,

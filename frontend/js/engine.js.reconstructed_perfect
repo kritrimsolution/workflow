@@ -1,950 +1,0 @@
-# Workflow Automation Enhancements — Implementation Plan
-
-This plan details the design and implementation of three major improvements requested by the user:
-1. **Progressive Multi-Level Undo**: Restoring a historical stack of changes (add/delete/move/connect/configure) instead of reverting only to the database state.
-2. **Advanced Prompt Parser**:
-- Correcting fuzzy column match false-positives (fixing substring matching direction).
-- Implementing conditional action context-lookup to resolve terms like `"that name"`, `"that column"`, or `"it"` back to the column referenced in the preceding condition (e.g. `"in dataset column there is Cleveland remove land from that name"`).
-- Reordering action regexes so substring operations have higher precedence than column deletion.
-- Unified conditional conversion logic that compiles row-level transformations (text transform, replacements, casing) into conditional `add_column` formulas.
-3. **Visual Formula Builder**: Adding a dropdown/template helper UI within the Add Column configurations panel to automatically generate JavaScript expressions for non-technical users.
-
----
-
-## User Review Required
-
-> [!NOTE]
-> All changes are completely client-side in Vanilla HTML, CSS, and JS. We will increment the assets version to `?v=8` in `index.html` to bust aggressive local browser caching.
-
----
-
-## Proposed Changes
-
-### [Component Name] Engine Module (`js/engine.js`)
-
-We will improve the natural lang
-// MISSING LINE 26
-// MISSING LINE 27
-// MISSING LINE 28
-// MISSING LINE 29
-// MISSING LINE 30
-// MISSING LINE 31
-// MISSING LINE 32
-// MISSING LINE 33
-// MISSING LINE 34
-// MISSING LINE 35
-// MISSING LINE 36
-// MISSING LINE 37
-// MISSING LINE 38
-// MISSING LINE 39
-// MISSING LINE 40
-// MISSING LINE 41
-// MISSING LINE 42
-// MISSING LINE 43
-// MISSING LINE 44
-// MISSING LINE 45
-// MISSING LINE 46
-// MISSING LINE 47
-
-#### [MODIFY] [canvas.js](file:///d:/Projects/workflow/js/canvas.js)
-
-### [Component Name] App SPA Shell (`index.html`)
-
-Update query version strings on script assets from `?v=7` to `?v=8`.
-
-#### [MODIFY] [index.html](file:///d:/Projects/workflow/index.html)
-
----
-
-## Verification Plan
-
-### Automated Tests
-- Run `node scratch/test_engine.js` to ensure the mock execution engine still runs correctly after parser refactoring.
-
-### Manual Verification
-1. **Undo Verification**:
-- Perform canvas actions (drag a node, add a node, delete a connection, configure a node).
-- Press "Undo" and verify each individual action is reverted step-by-step.
-2. **Prompt Parser Verification**:
-- Input `"in dataset column there is Cleveland remove land from that name"` in the top AI prompt bar.
-- Click Generate. Verify that:
-- No column deletion of `"land"` or `"name"` happens.
-- A new `Add Column` node is created.
-- The target column is `"Dataset"`.
-- The formula is: `(String({Dataset}).toLowerCase().includes("cleveland")) ? String({Dataset}).replace(new RegExp("land", "g"), "") : {Dataset}`.
-- Click Run and verify the output dataset table shows `"Cleveland"` mapped to `"Cleve"`.
-3. **Visual Formula Builder Verification**:
-- Drag and click an `Add Column` node.
-- Select "Mathematical Operation" template, pick `Amount`, select `*`, and enter `1.18`. Verify the main formula input auto-populates with `{Amount} * 1.18`.
-- Select "Simple Condition", pick `Age`, select `>`, compare with `60`, value if true `Senior`, value if false `Junior`. Verify formula updates to `({Age} > 60) ? "Senior" : "Junior"`.
-- Select "Create with Prompt", input `"uppercase name"`, click Generate, verify formula is set to `((s => String(s).toUpperCase())({Name}))` and target column is set to `Name`.
-
-// MISSING LINE 82
-// MISSING LINE 83
-// MISSING LINE 84
-// MISSING LINE 85
-// MISSING LINE 86
-// MISSING LINE 87
-// MISSING LINE 88
-// MISSING LINE 89
-// MISSING LINE 90
-// MISSING LINE 91
-// MISSING LINE 92
-// MISSING LINE 93
-// MISSING LINE 94
-// MISSING LINE 95
-// MISSING LINE 96
-// MISSING LINE 97
-// MISSING LINE 98
-// MISSING LINE 99
-// MISSING LINE 100
-// MISSING LINE 101
-// MISSING LINE 102
-// MISSING LINE 103
-// MISSING LINE 104
-// MISSING LINE 105
-// MISSING LINE 106
-// MISSING LINE 107
-// MISSING LINE 108
-// MISSING LINE 109
-// MISSING LINE 110
-// MISSING LINE 111
-// MISSING LINE 112
-// MISSING LINE 113
-// MISSING LINE 114
-// MISSING LINE 115
-// MISSING LINE 116
-// MISSING LINE 117
-// MISSING LINE 118
-// MISSING LINE 119
-// MISSING LINE 120
-// MISSING LINE 121
-// MISSING LINE 122
-// MISSING LINE 123
-// MISSING LINE 124
-// MISSING LINE 125
-// MISSING LINE 126
-// MISSING LINE 127
-// MISSING LINE 128
-// MISSING LINE 129
-// MISSING LINE 130
-// MISSING LINE 131
-// MISSING LINE 132
-// MISSING LINE 133
-// MISSING LINE 134
-// MISSING LINE 135
-// MISSING LINE 136
-// MISSING LINE 137
-// MISSING LINE 138
-// MISSING LINE 139
-// MISSING LINE 140
-// MISSING LINE 141
-// MISSING LINE 142
-// MISSING LINE 143
-// MISSING LINE 144
-// MISSING LINE 145
-// MISSING LINE 146
-// MISSING LINE 147
-// MISSING LINE 148
-// MISSING LINE 149
-// MISSING LINE 150
-// MISSING LINE 151
-// MISSING LINE 152
-// MISSING LINE 153
-// MISSING LINE 154
-// MISSING LINE 155
-// MISSING LINE 156
-// MISSING LINE 157
-// MISSING LINE 158
-// MISSING LINE 159
-// MISSING LINE 160
-// MISSING LINE 161
-// MISSING LINE 162
-// MISSING LINE 163
-// MISSING LINE 164
-// MISSING LINE 165
-// MISSING LINE 166
-// MISSING LINE 167
-// MISSING LINE 168
-// MISSING LINE 169
-// MISSING LINE 170
-// MISSING LINE 171
-// MISSING LINE 172
-// MISSING LINE 173
-// MISSING LINE 174
-// MISSING LINE 175
-// MISSING LINE 176
-// MISSING LINE 177
-// MISSING LINE 178
-// MISSING LINE 179
-// MISSING LINE 180
-// MISSING LINE 181
-// MISSING LINE 182
-// MISSING LINE 183
-// MISSING LINE 184
-// MISSING LINE 185
-// MISSING LINE 186
-// MISSING LINE 187
-// MISSING LINE 188
-// MISSING LINE 189
-// MISSING LINE 190
-// MISSING LINE 191
-// MISSING LINE 192
-// MISSING LINE 193
-// MISSING LINE 194
-// MISSING LINE 195
-// MISSING LINE 196
-// MISSING LINE 197
-// MISSING LINE 198
-// MISSING LINE 199
-
-if (/^\+91-?6[0-9]/.test(phone)) return '"Jio"';
-
-if (/^\+1/.test(phone)) return '"AT&T"';
-
-if (/^\+44/.test(phone)) return '"BT"';
-
-return '"Unknown"';
-
-});
-
-
-
-expr = expr.replace(/today\(\)/g, `"${new Date().toISOString().split('T')[0]}"`);
-
-expr = expr.replace(/now\(\)/g, `"${new Date().toISOString()}"`);
-
-expr = expr.replace(/upper\(([^)]+)\)/g, (_, a) => `(${a}||"").toUpperCase()`);
-
-expr = expr.replace(/lower\(([^)]+)\)/g, (_, a) => `(${a}||"").toLowerCase()`);
-
-expr = expr.replace(/trim\(([^)]+)\)/g, (_, a) => `(${a}||"").trim()`);
-
-expr = expr.replace(/len\(([^)]+)\)/g, (_, a) => `(${a}||"").length`);
-
-
-
-try {
-
-// eslint-disable-next-line no-new-func
-
-return Function(`"use strict"; return (${expr})`)();
-
-} catch {
-
-return null;
-
-}
-
-}
-
-
-
-// ── Step Executors ───────────────────────────────────────────
-
-const steps = {
-
-// Source nodes — build initial dataset
-
-source(node, state, wf) {
-
-if (node.config?.csvText) {
-
-const { columns, rows } = parseCSV(node.config.csvText);
-
-return { columns, rows };
-
-}
-
-if (node.config?.jsonText) {
-
-return parseJSON(node.config.jsonText);
-
-}
-
-// Use uploaded file data if available on workflow
-
-if (wf && wf._uploadedData) {
-
-return { columns: wf._uploadedData.columns, rows: wf._uploadedData.rows };
-
-}
-
-if (node.config?.sampleData && node.config?.columns) {
-
-const columns = node.config.columns;
-
-const rows = node.config.sampleData.map(r => {
-
-const row = {};
-
-columns.forEach((c, i) => row[c] = r[i] !== undefined ? r[i] : '');
-
-return row;
-
-});
-
-return { columns, rows };
-
-}
-
-// Generate minimal sample
-
-return {
-
-columns: ['ID', 'Name', 'DOB', 'Country', 'Phone', 'Amount'],
-
-rows: [
-
-{ ID:'1', Name:'Alice',   DOB:'1990-05-12', Country:'India',   Phone:'+91-9876543210', Amount:'1200' },
-
-{ ID:'2', Name:'Bob',     DOB:'1985-11-23', Country:'USA',     Phone:'+1-2025551234',  Amount:'3400' },
-
-{ ID:'3', Name:'Carol',   DOB:'1992-03-08', Country:'Germany', Phone:'+91-8012345678', Amount:'2100' },
-
-{ ID:'4', Name:'David',   DOB:'1978-07-30', Country:'India',   Phone:'+91-7712345678', Amount:'560'  },
-
-{ ID:'5', Name:'Emma',    DOB:'1995-01-15', Country:'UK',      Phone:'+44-7912345678', Amount:'4200' },
-
-],
-
-};
-
-},
-
-
-
-// Add new column
-
-add_column(node, state) {
-
-const { targetColumn, formula, sourceColumn, subtype } = node.config || {};
-
-if (!targetColumn) return state;
-
-const rows = state.rows.map(row => {
-
-let val;
-
-if (formula) {
-
-val = evalFormula(formula, row);
-
-} else if (sourceColumn && subtype === 'add_column') {
-
-val = dateDiffYears(row[sourceColumn]);
-
-} else {
-
-val = null;
-
-}
-
-return { ...row, [targetColumn]: val };
-
-});
-
-const columns = state.columns.includes(targetColumn)
-
-? state.columns
-
-// MISSING LINE 351
-// MISSING LINE 352
-// MISSING LINE 353
-// MISSING LINE 354
-// MISSING LINE 355
-// MISSING LINE 356
-// MISSING LINE 357
-// MISSING LINE 358
-// MISSING LINE 359
-// MISSING LINE 360
-// MISSING LINE 361
-// MISSING LINE 362
-// MISSING LINE 363
-// MISSING LINE 364
-// MISSING LINE 365
-// MISSING LINE 366
-// MISSING LINE 367
-// MISSING LINE 368
-// MISSING LINE 369
-// MISSING LINE 370
-// MISSING LINE 371
-// MISSING LINE 372
-// MISSING LINE 373
-// MISSING LINE 374
-// MISSING LINE 375
-// MISSING LINE 376
-// MISSING LINE 377
-// MISSING LINE 378
-// MISSING LINE 379
-// MISSING LINE 380
-// MISSING LINE 381
-// MISSING LINE 382
-// MISSING LINE 383
-// MISSING LINE 384
-// MISSING LINE 385
-// MISSING LINE 386
-// MISSING LINE 387
-// MISSING LINE 388
-// MISSING LINE 389
-// MISSING LINE 390
-// MISSING LINE 391
-// MISSING LINE 392
-// MISSING LINE 393
-// MISSING LINE 394
-// MISSING LINE 395
-// MISSING LINE 396
-// MISSING LINE 397
-// MISSING LINE 398
-// MISSING LINE 399
-// MISSING LINE 400
-// MISSING LINE 401
-// MISSING LINE 402
-// MISSING LINE 403
-// MISSING LINE 404
-// MISSING LINE 405
-// MISSING LINE 406
-// MISSING LINE 407
-// MISSING LINE 408
-// MISSING LINE 409
-// MISSING LINE 410
-// MISSING LINE 411
-// MISSING LINE 412
-// MISSING LINE 413
-// MISSING LINE 414
-// MISSING LINE 415
-// MISSING LINE 416
-// MISSING LINE 417
-// MISSING LINE 418
-// MISSING LINE 419
-// MISSING LINE 420
-// MISSING LINE 421
-// MISSING LINE 422
-// MISSING LINE 423
-// MISSING LINE 424
-// MISSING LINE 425
-// MISSING LINE 426
-// MISSING LINE 427
-// MISSING LINE 428
-// MISSING LINE 429
-// MISSING LINE 430
-// MISSING LINE 431
-// MISSING LINE 432
-// MISSING LINE 433
-// MISSING LINE 434
-// MISSING LINE 435
-// MISSING LINE 436
-// MISSING LINE 437
-// MISSING LINE 438
-// MISSING LINE 439
-// MISSING LINE 440
-// MISSING LINE 441
-// MISSING LINE 442
-// MISSING LINE 443
-// MISSING LINE 444
-// MISSING LINE 445
-// MISSING LINE 446
-// MISSING LINE 447
-// MISSING LINE 448
-// MISSING LINE 449
-// MISSING LINE 450
-// MISSING LINE 451
-// MISSING LINE 452
-// MISSING LINE 453
-// MISSING LINE 454
-// MISSING LINE 455
-// MISSING LINE 456
-// MISSING LINE 457
-// MISSING LINE 458
-// MISSING LINE 459
-// MISSING LINE 460
-// MISSING LINE 461
-// MISSING LINE 462
-// MISSING LINE 463
-// MISSING LINE 464
-// MISSING LINE 465
-// MISSING LINE 466
-// MISSING LINE 467
-// MISSING LINE 468
-// MISSING LINE 469
-// MISSING LINE 470
-// MISSING LINE 471
-// MISSING LINE 472
-// MISSING LINE 473
-// MISSING LINE 474
-// MISSING LINE 475
-// MISSING LINE 476
-// MISSING LINE 477
-// MISSING LINE 478
-// MISSING LINE 479
-// MISSING LINE 480
-// MISSING LINE 481
-// MISSING LINE 482
-// MISSING LINE 483
-// MISSING LINE 484
-// MISSING LINE 485
-// MISSING LINE 486
-// MISSING LINE 487
-// MISSING LINE 488
-// MISSING LINE 489
-// MISSING LINE 490
-// MISSING LINE 491
-// MISSING LINE 492
-// MISSING LINE 493
-// MISSING LINE 494
-// MISSING LINE 495
-// MISSING LINE 496
-// MISSING LINE 497
-// MISSING LINE 498
-// MISSING LINE 499
-// MISSING LINE 500
-// MISSING LINE 501
-// MISSING LINE 502
-// MISSING LINE 503
-// MISSING LINE 504
-// MISSING LINE 505
-// MISSING LINE 506
-// MISSING LINE 507
-// MISSING LINE 508
-// MISSING LINE 509
-// MISSING LINE 510
-// MISSING LINE 511
-// MISSING LINE 512
-// MISSING LINE 513
-// MISSING LINE 514
-// MISSING LINE 515
-// MISSING LINE 516
-// MISSING LINE 517
-// MISSING LINE 518
-// MISSING LINE 519
-// MISSING LINE 520
-// MISSING LINE 521
-// MISSING LINE 522
-// MISSING LINE 523
-// MISSING LINE 524
-// MISSING LINE 525
-// MISSING LINE 526
-// MISSING LINE 527
-// MISSING LINE 528
-// MISSING LINE 529
-// MISSING LINE 530
-// MISSING LINE 531
-// MISSING LINE 532
-// MISSING LINE 533
-// MISSING LINE 534
-// MISSING LINE 535
-// MISSING LINE 536
-// MISSING LINE 537
-// MISSING LINE 538
-// MISSING LINE 539
-// MISSING LINE 540
-// MISSING LINE 541
-// MISSING LINE 542
-// MISSING LINE 543
-// MISSING LINE 544
-// MISSING LINE 545
-// MISSING LINE 546
-// MISSING LINE 547
-// MISSING LINE 548
-// MISSING LINE 549
-// MISSING LINE 550
-// MISSING LINE 551
-// MISSING LINE 552
-// MISSING LINE 553
-// MISSING LINE 554
-// MISSING LINE 555
-// MISSING LINE 556
-// MISSING LINE 557
-// MISSING LINE 558
-// MISSING LINE 559
-// MISSING LINE 560
-// MISSING LINE 561
-// MISSING LINE 562
-// MISSING LINE 563
-// MISSING LINE 564
-// MISSING LINE 565
-// MISSING LINE 566
-// MISSING LINE 567
-// MISSING LINE 568
-// MISSING LINE 569
-// MISSING LINE 570
-// MISSING LINE 571
-// MISSING LINE 572
-// MISSING LINE 573
-// MISSING LINE 574
-// MISSING LINE 575
-// MISSING LINE 576
-// MISSING LINE 577
-// MISSING LINE 578
-// MISSING LINE 579
-// MISSING LINE 580
-// MISSING LINE 581
-// MISSING LINE 582
-// MISSING LINE 583
-// MISSING LINE 584
-// MISSING LINE 585
-// MISSING LINE 586
-// MISSING LINE 587
-// MISSING LINE 588
-// MISSING LINE 589
-// MISSING LINE 590
-// MISSING LINE 591
-// MISSING LINE 592
-// MISSING LINE 593
-// MISSING LINE 594
-// MISSING LINE 595
-// MISSING LINE 596
-// MISSING LINE 597
-// MISSING LINE 598
-// MISSING LINE 599
-// MISSING LINE 600
-// MISSING LINE 601
-// MISSING LINE 602
-// MISSING LINE 603
-// MISSING LINE 604
-// MISSING LINE 605
-// MISSING LINE 606
-// MISSING LINE 607
-// MISSING LINE 608
-// MISSING LINE 609
-// MISSING LINE 610
-// MISSING LINE 611
-// MISSING LINE 612
-// MISSING LINE 613
-// MISSING LINE 614
-// MISSING LINE 615
-// MISSING LINE 616
-// MISSING LINE 617
-// MISSING LINE 618
-// MISSING LINE 619
-// MISSING LINE 620
-// MISSING LINE 621
-// MISSING LINE 622
-// MISSING LINE 623
-// MISSING LINE 624
-// MISSING LINE 625
-// MISSING LINE 626
-// MISSING LINE 627
-// MISSING LINE 628
-// MISSING LINE 629
-// MISSING LINE 630
-// MISSING LINE 631
-// MISSING LINE 632
-// MISSING LINE 633
-// MISSING LINE 634
-// MISSING LINE 635
-// MISSING LINE 636
-// MISSING LINE 637
-// MISSING LINE 638
-// MISSING LINE 639
-// MISSING LINE 640
-// MISSING LINE 641
-// MISSING LINE 642
-// MISSING LINE 643
-// MISSING LINE 644
-// MISSING LINE 645
-// MISSING LINE 646
-// MISSING LINE 647
-// MISSING LINE 648
-// MISSING LINE 649
-// MISSING LINE 650
-// MISSING LINE 651
-// MISSING LINE 652
-// MISSING LINE 653
-// MISSING LINE 654
-// MISSING LINE 655
-// MISSING LINE 656
-// MISSING LINE 657
-// MISSING LINE 658
-// MISSING LINE 659
-// MISSING LINE 660
-// MISSING LINE 661
-// MISSING LINE 662
-// MISSING LINE 663
-// MISSING LINE 664
-// MISSING LINE 665
-// MISSING LINE 666
-// MISSING LINE 667
-// MISSING LINE 668
-// MISSING LINE 669
-// MISSING LINE 670
-// MISSING LINE 671
-// MISSING LINE 672
-// MISSING LINE 673
-// MISSING LINE 674
-// MISSING LINE 675
-// MISSING LINE 676
-// MISSING LINE 677
-// MISSING LINE 678
-// MISSING LINE 679
-// MISSING LINE 680
-// MISSING LINE 681
-// MISSING LINE 682
-// MISSING LINE 683
-// MISSING LINE 684
-// MISSING LINE 685
-// MISSING LINE 686
-// MISSING LINE 687
-// MISSING LINE 688
-// MISSING LINE 689
-// MISSING LINE 690
-// MISSING LINE 691
-// MISSING LINE 692
-// MISSING LINE 693
-// MISSING LINE 694
-// MISSING LINE 695
-// MISSING LINE 696
-// MISSING LINE 697
-// MISSING LINE 698
-// MISSING LINE 699
-// MISSING LINE 700
-// MISSING LINE 701
-// MISSING LINE 702
-// MISSING LINE 703
-// MISSING LINE 704
-// MISSING LINE 705
-// MISSING LINE 706
-// MISSING LINE 707
-// MISSING LINE 708
-// MISSING LINE 709
-// MISSING LINE 710
-// MISSING LINE 711
-// MISSING LINE 712
-// MISSING LINE 713
-// MISSING LINE 714
-// MISSING LINE 715
-// MISSING LINE 716
-// MISSING LINE 717
-// MISSING LINE 718
-// MISSING LINE 719
-// MISSING LINE 720
-// MISSING LINE 721
-// MISSING LINE 722
-// MISSING LINE 723
-// MISSING LINE 724
-// MISSING LINE 725
-// MISSING LINE 726
-// MISSING LINE 727
-// MISSING LINE 728
-// MISSING LINE 729
-// MISSING LINE 730
-// MISSING LINE 731
-// MISSING LINE 732
-// MISSING LINE 733
-// MISSING LINE 734
-// MISSING LINE 735
-// MISSING LINE 736
-// MISSING LINE 737
-// MISSING LINE 738
-// MISSING LINE 739
-
-return true;
-
-}
-
-});
-
-
-
-const columns = [...state.columns];
-
-if (action === 'flag') {
-
-if (!columns.includes('_validation_status')) columns.push('_validation_status');
-
-if (!columns.includes('_validation_details')) columns.push('_validation_details');
-
-}
-
-
-
-return { columns, rows: newRows };
-
-},
-
-};
-
-
-
-// ── Execute workflow ─────────────────────────────────────────
-
-function run(workflow) {
-
-const t0 = Date.now();
-
-let state = { columns: [], rows: [] };
-
-const errors = [];
-
-
-
-// Topological sort (BFS from source nodes)
-
-const nodeMap = {};
-
-workflow.nodes.forEach(n => nodeMap[n.id] = n);
-
-const inDegree = {};
-
-workflow.nodes.forEach(n => inDegree[n.id] = 0);
-
-workflow.edges.forEach(e => { if (inDegree[e.to] !== undefined) inDegree[e.to]++; });
-
-const queue = workflow.nodes.filter(n => inDegree[n.id] === 0);
-
-const order = [];
-
-const visited = new Set();
-
-while (queue.length) {
-
-const node = queue.shift();
-
-if (visited.has(node.id)) continue;
-
-visited.add(node.id);
-
-order.push(node);
-
-workflow.edges.filter(e => e.from === node.id).forEach(e => {
-
-inDegree[e.to]--;
-
-if (inDegree[e.to] === 0) queue.push(nodeMap[e.to]);
-
-});
-
-}
-
-// Append any remaining not reached
-
-workflow.nodes.forEach(n => { if (!visited.has(n.id)) order.push(n); });
-
-
-
-const nodeStates = {};
-
-const defaultState = workflow._uploadedData
-
-? { columns: workflow._uploadedData.columns, rows: workflow._uploadedData.rows }
-
-: { columns: [], rows: [] };
-
-
-
-// Execute steps
-
-for (const node of order) {
-
-try {
-
-const incoming = workflow.edges.filter(e => e.to === node.id);
-
-let inputState = null;
-
-if (incoming.length > 0) {
-
-// Find the source state from the first incoming connection
-
-inputState = nodeStates[incoming[0].from];
-
-}
-
-// Fallback to default state if no input state is found
-
-if (!inputState) {
-
-inputState = { columns: [...defaultState.columns], rows: defaultState.rows.map(r => ({ ...r })) };
-
-} else {
-
-// Deep copy the input state to avoid mutating previous node states
-
-inputState = { columns: [...inputState.columns], rows: inputState.rows.map(r => ({ ...r })) };
-
-}
-
-
-
-const subtype = node.config?.subtype || node.subtype || node.type;
-
-let executor = steps[subtype] || steps[node.type];
-
-if (node.type === 'source') {
-
-executor = steps['source'];
-
-} else if (node.type === 'output') {
-
-executor = steps['output'];
-
-}
-
-let outState = inputState;
-
-if (executor) {
-
-outState = executor(node, inputState, workflow) || inputState;
-
-}
-
-nodeStates[node.id] = outState;
-
-state = outState; // Keep track of the last executed state
-
-} catch (err) {
-
-errors.push(`Node "${node.label}": ${err.message}`);
-
-}
-
-}
-
-
-
-// Prefer output node's state for final preview if one exists
-
-const outputNodes = order.filter(n => n.type === 'output');
-
-if (outputNodes.length > 0) {
-
-const outNode = outputNodes[outputNodes.length - 1];
-
-if (nodeStates[outNode.id]) {
-
-state = nodeStates[outNode.id];
-
-}
-
-}
-
-
-
-const duration = Date.now() - t0;
-
-return { success: errors.length === 0, state, duration, errors };
-
-}
-
-
-
-// ── AI Prompt Parser ─────────────────────────────────────────
-
-// Converts natural language to workflow node specs.
-
-// Handles broad vocabulary: make/set/change/update/mark/assign/turn/flag
-
-// Handles no-space operators: TRESTBPS>145, age>=18
-
-// Handles fuzzy column matching against actual data columns
-
-function parsePrompt(text, columns = []) {
-const result = [];
-const t = text.trim();
-
-let currentContextCol = null;
-let conditionExpr = null;
-let actionClause = t;
-
-// Check for "in <col> column there is <val> <action>"
-let condPrefixMatch = t.match(/^(?:in|for|where)\s+([\w\s]+?)(?:\s+column)?\s+(?:there\s+is|is|has|=)\s+([\w\s"']+?)(?:\s+then|,|\s)+(.*)$/i);
