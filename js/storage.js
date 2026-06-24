@@ -40,8 +40,16 @@ const Storage = (() => {
       if (idx === -1) continue;
       const key = trimmed.substring(0, idx).trim();
       let val = trimmed.substring(idx + 1).trim();
+      
+      // Remove inline comments
+      const commentIdx = val.indexOf('#');
+      if (commentIdx !== -1) {
+        val = val.substring(0, commentIdx).trim();
+      }
+      
+      // Remove surrounding quotes
       if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-        val = val.substring(1, val.length - 1);
+        val = val.substring(1, val.length - 1).trim();
       }
       env[key] = val;
     }
@@ -138,6 +146,16 @@ const Storage = (() => {
 
   // ── Database Initialization ──────────────────────────────────
   async function init() {
+    if (typeof window !== 'undefined' && window.location && window.location.protocol === 'file:') {
+      console.warn('Running via file:// protocol. Browser will block outbound fetches to database.');
+      // Wait slightly so UI.toast is ready/mounted
+      setTimeout(() => {
+        if (window.UI && typeof window.UI.toast === 'function') {
+          window.UI.toast('Database sync blocked on file:// protocol. Please open http://localhost:8000 instead.', 'error');
+        }
+      }, 1000);
+    }
+
     const env = await loadEnv();
     window.env = env;
 
