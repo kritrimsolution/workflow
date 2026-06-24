@@ -725,11 +725,11 @@ const Canvas = (() => {
     overlay.innerHTML = `<div class="gen-spinner"></div><div class="gen-label">Generating workflow…</div>`;
     area?.appendChild(overlay);
 
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
         isExecutingCompoundAction = true;
         const cols = uploadedData ? uploadedData.columns : [];
-        const generatedNodes = Engine.parsePrompt(text, cols);
+        const generatedNodes = await Engine.parsePrompt(text, cols);
 
         if (!generatedNodes.length) {
           overlay.remove();
@@ -2188,13 +2188,13 @@ const Canvas = (() => {
     }
   }
 
-  function _generateFormulaFromHelperPrompt() {
+  async function _generateFormulaFromHelperPrompt() {
     const prompt = document.getElementById('cfg-helper-prompt')?.value?.trim();
     if (!prompt) { UI.toast('Please enter a description', 'error'); return; }
     const availCols = uploadedData ? uploadedData.columns : [];
     
     try {
-      const nodesGen = Engine.parsePrompt(prompt, availCols);
+      const nodesGen = await Engine.parsePrompt(prompt, availCols);
       if (nodesGen && nodesGen.length > 0) {
         const formulaNode = nodesGen.find(n => n.subtype === 'add_column');
         if (formulaNode && formulaNode.config?.formula) {

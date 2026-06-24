@@ -847,7 +847,30 @@ const Engine = (() => {
 
   // Handles fuzzy column matching against actual data columns
 
-  function parsePrompt(text, columns = []) {
+  async function parsePrompt(text, columns = []) {
+    try {
+      const res = await fetch('/api/parse-prompt', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ prompt: text, columns })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Failed to compile prompt');
+      }
+      return await res.json();
+    } catch (e) {
+      console.warn('Gemini prompt parsing failed, falling back to local regex parser:', e);
+      if (window.UI && typeof window.UI.toast === 'function') {
+        window.UI.toast(`Using offline parser fallback (LLM failed: ${e.message})`, 'warning');
+      }
+      return localRegexParsePrompt(text, columns);
+    }
+  }
+
+  function localRegexParsePrompt(text, columns = []) {
 
     const result = [];
 
@@ -2084,6 +2107,8 @@ const Engine = (() => {
     });
 
   }
+
+
 
   // ── Export helpers ────────────────────────────────────────────
 

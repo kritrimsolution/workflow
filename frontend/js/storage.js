@@ -15,56 +15,11 @@ const Storage = (() => {
   };
 
   // ── Environment & DB Core ─────────────────────────────────────
-  async function loadEnv() {
-    try {
-      const response = await fetch('/.env');
-      if (!response.ok) {
-        const response2 = await fetch('.env');
-        if (!response2.ok) throw new Error('Failed to fetch .env');
-        return parseEnv(await response2.text());
-      }
-      return parseEnv(await response.text());
-    } catch (e) {
-      console.warn('Could not load .env file, using defaults:', e);
-      return {};
-    }
-  }
-
-  function parseEnv(text) {
-    const env = {};
-    const lines = text.split('\n');
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const idx = trimmed.indexOf('=');
-      if (idx === -1) continue;
-      const key = trimmed.substring(0, idx).trim();
-      let val = trimmed.substring(idx + 1).trim();
-      
-      // Remove inline comments
-      const commentIdx = val.indexOf('#');
-      if (commentIdx !== -1) {
-        val = val.substring(0, commentIdx).trim();
-      }
-      
-      // Remove surrounding quotes
-      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-        val = val.substring(1, val.length - 1).trim();
-      }
-      env[key] = val;
-    }
-    return env;
-  }
-
   async function dbQuery(sql, params = []) {
-    if (!dbConfig.connectionString) {
-      throw new Error('Database connection string is empty.');
-    }
-    const res = await fetch(dbConfig.url, {
+    const res = await fetch('/api/db/query', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Neon-Connection-String': dbConfig.connectionString
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({ query: sql, params })
     });
@@ -155,15 +110,6 @@ const Storage = (() => {
         }
       }, 1000);
     }
-
-    const env = await loadEnv();
-    window.env = env;
-
-    const dbUrl = env.DATABASE_URL || 'postgresql://neondb_owner:npg_raOEb8sH5pfZ@ep-dawn-forest-aidva6wp-pooler.c-4.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
-    dbConfig.connectionString = dbUrl;
-    const hostMatch = dbUrl.match(/@([^/:]+)/);
-    const host = hostMatch ? hostMatch[1] : '';
-    dbConfig.url = `https://${host}/sql`;
 
     try {
       console.log('Initializing database tables...');
