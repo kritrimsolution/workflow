@@ -23,12 +23,15 @@ const Router = (() => {
   }
 
   function dispatch() {
-    const hash = window.location.hash || '#/login';
+    const hash = window.location.hash || '#/landing';
     const parts = hash.replace('#/', '').split('/');
-    const route = parts[0] || 'login';
+    const route = parts[0] || 'landing';
     const param = parts[1];
 
     switch (route) {
+      case 'landing':
+        Landing.render();
+        break;
       case 'login':
         Auth.renderLoginPage();
         break;
@@ -47,7 +50,7 @@ const Router = (() => {
         Viewer.renderUserDashboard();
         break;
       default:
-        Auth.renderLoginPage();
+        Router.navigate('landing');
     }
   }
 
