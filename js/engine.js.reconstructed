@@ -1,0 +1,1180 @@
+# Workflow Automation Enhancements — Implementation Plan
+
+This plan details the design and implementation of three major improvements requested by the user:
+1. **Progressive Multi-Level Undo**: Restoring a historical stack of changes (add/delete/move/connect/configure) instead of reverting only to the database state.
+2. **Advanced Prompt Parser**:
+- Correcting fuzzy column match false-positives (fixing substring matching direction).
+- Implementing conditional action context-lookup to resolve terms like `"that name"`, `"that column"`, or `"it"` back to the column referenced in the preceding condition (e.g. `"in dataset column there is Cleveland remove land from that name"`).
+- Reordering action regexes so substring operations have higher precedence than column deletion.
+- Unified conditional conversion logic that compiles row-level transformations (text transform, replacements, casing) into conditional `add_column` formulas.
+3. **Visual Formula Builder**: Adding a dropdown/template helper UI within the Add Column configurations panel to automatically generate JavaScript expressions for non-technical users.
+
+---
+
+## User Review Required
+
+> [!NOTE]
+> All changes are completely client-side in Vanilla HTML, CSS, and JS. We will increment the assets version to `?v=8` in `index.html` to bust aggressive local browser caching.
+
+---
+
+## Proposed Changes
+
+### [Component Name] Engine Module (`js/engine.js`)
+
+We will improve the natural lang
+<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:24px;">
+<div style="width:48px;height:48px;color:#00827c;animation:spin 1.5s ease-in-out infinite;">
+<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block; width:100%; height:100%;">
+<path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor"/>
+<path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+</div>
+<div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#bbc7c6;">Loading DataFlow…</div>
+</div>
+</div>
+
+<!-- Toast container (global fallback) -->
+<div class="toast-container" id="toast-container"></div>
+
+<style>
+@keyframes spin {
+from { transform: rotate(0deg); }
+to { transform: rotate(360deg); }
+}
+</style>
+
+
+#### [MODIFY] [canvas.js](file:///d:/Projects/workflow/js/canvas.js)
+
+### [Component Name] App SPA Shell (`index.html`)
+
+Update query version strings on script assets from `?v=7` to `?v=8`.
+
+#### [MODIFY] [index.html](file:///d:/Projects/workflow/index.html)
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Run `node scratch/test_engine.js` to ensure the mock execution engine still runs correctly after parser refactoring.
+
+### Manual Verification
+1. **Undo Verification**:
+- Perform canvas actions (drag a node, add a node, delete a connection, configure a node).
+- Press "Undo" and verify each individual action is reverted step-by-step.
+2. **Prompt Parser Verification**:
+- Input `"in dataset column there is Cleveland remove land from that name"` in the top AI prompt bar.
+- Click Generate. Verify that:
+- No column deletion of `"land"` or `"name"` happens.
+- A new `Add Column` node is created.
+- The target column is `"Dataset"`.
+- The formula is: `(String({Dataset}).toLowerCase().includes("cleveland")) ? String({Dataset}).replace(new RegExp("land", "g"), "") : {Dataset}`.
+- Click Run and verify the output dataset table shows `"Cleveland"` mapped to `"Cleve"`.
+3. **Visual Formula Builder Verification**:
+- Drag and click an `Add Column` node.
+- Select "Mathematical Operation" template, pick `Amount`, select `*`, and enter `1.18`. Verify the main formula input auto-populates with `{Amount} * 1.18`.
+- Select "Simple Condition", pick `Age`, select `>`, compare with `60`, value if true `Senior`, value if false `Junior`. Verify formula updates to `({Age} > 60) ? "Senior" : "Junior"`.
+- Select "Create with Prompt", input `"uppercase name"`, click Generate, verify formula is set to `((s => String(s).toUpperCase())({Name}))` and target column is set to `Name`.
+
+const re = new RegExp(`\\b${safeCol}\\b`, 'g');
+if (expr.includes(col)) {
+expr = expr.replace(re, JSON.stringify(row[col]));
+}
+});
+
+// Special functions
+expr = expr.replace(/datediff\(([^)]+)\)/g, (_, arg) => {
+const val = arg.startsWith('"') ? JSON.parse(arg) : row[arg.trim()];
+const years = dateDiffYears(val);
+return years !== null ? years : 'null';
+});
+
+// operator(PhoneCol) → detect carrier from phone prefix
+expr = expr.replace(/operator\(([^)]+)\)/g, (_, arg) => {
+const targetVal = inlineCond[5].trim();
+if (/^\+91-?9[6-9]/.test(phone) || /^9[6-9]/.test(phone)) return '"Vodafone"';
+if (/^\+91-?8[0-9]/.test(phone) || /^8[0-9]/.test(phone)) return '"Airtel"';
+if (/^\+91-?7[0-9]/.test(phone) || /^7[0-9]/.test(phone)) return '"BSNL"';
+if (/^\+91-?6[0-9]/.test(phone)) return '"Jio"';
+if (/^\+1/.test(phone)) return '"AT&T"';
+if (/^\+44/.test(phone)) return '"BT"';
+return '"Unknown"';
+});
+
+expr = expr.replace(/today\(\)/g, `"${new Date().toISOString().split('T')[0]}"`);
+expr = expr.replace(/now\(\)/g, `"${new Date().toISOString()}"`);
+expr = expr.replace(/upper\(([^)]+)\)/g, (_, a) => `(${a}||"").toUpperCase()`);
+expr = expr.replace(/lower\(([^)]+)\)/g, (_, a) => `(${a}||"").toLowerCase()`);
+expr = expr.replace(/trim\(([^)]+)\)/g, (_, a) => `(${a}||"").trim()`);
+expr = expr.replace(/len\(([^)]+)\)/g, (_, a) => `(${a}||"").length`);
+
+try {
+// eslint-disable-next-line no-new-func
+return Function(`"use strict"; return (${expr})`)();
+} catch {
+return null;
+}
+}
+
+// ── Step Executors ───────────────────────────────────────────
+const steps = {
+// Source nodes — build initial dataset
+source(node, state, wf) {
+if (node.config?.csvText) {
+const { columns, rows } = parseCSV(node.config.csvText);
+return { columns, rows };
+}
+if (node.config?.jsonText) {
+return parseJSON(node.config.jsonText);
+}
+// Use uploaded file data if available on workflow
+if (wf && wf._uploadedData) {
+return { columns: wf._uploadedData.columns, rows: wf._uploadedData.rows };
+}
+if (node.config?.sampleData && node.config?.columns) {
+const columns = node.config.columns;
+const rows = node.config.sampleData.map(r => {
+const row = {};
+columns.forEach((c, i) => row[c] = r[i] !== undefined ? r[i] : '');
+return row;
+});
+return { columns, rows };
+}
+// Generate minimal sample
+return {
+columns: ['ID', 'Name', 'DOB', 'Country', 'Phone', 'Amount'],
+rows: [
+{ ID:'1', Name:'Alice',   DOB:'1990-05-12', Country:'India',   Phone:'+91-9876543210', Amount:'1200' },
+{ ID:'2', Name:'Bob',     DOB:'1985-11-23', Country:'USA',     Phone:'+1-2025551234',  Amount:'3400' },
+{ ID:'3', Name:'Carol',   DOB:'1992-03-08', Country:'Germany', Phone:'+91-8012345678', Amount:'2100' },
+{ ID:'4', Name:'David',   DOB:'1978-07-30', Country:'India',   Phone:'+91-7712345678', Amount:'560'  },
+{ ID:'5', Name:'Emma',    DOB:'1995-01-15', Country:'UK',      Phone:'+44-7912345678', Amount:'4200' },
+],
+};
+},
+
+// Add new column
+add_column(node, state) {
+const { targetColumn, formula, sourceColumn, subtype } = node.config || {};
+if (!targetColumn) return state;
+const rows = state.rows.map(row => {
+let val;
+if (formula) {
+val = evalFormula(formula, row);
+} else if (sourceColumn && subtype === 'add_column') {
+val = dateDiffYears(row[sourceColumn]);
+} else {
+val = null;
+}
+return { ...row, [targetColumn]: val };
+});
+const columns = state.columns.includes(targetColumn)
+? state.columns
+: [...state.columns, targetColumn];
+return { columns, rows };
+},
+
+// Rename columns
+rename_column(node, state) {
+const renames = node.config?.renames || {};
+const columns = state.columns.map(c => renames[c] || c);
+const rows = state.rows.map(row => {
+const newRow = {};
+Object.keys(row).forEach(k => {
+newRow[renames[k] || k] = row[k];
+});
+return newRow;
+});
+return { columns, rows };
+},
+
+// Delete columns
+delete_column(node, state) {
+const toDelete = node.config?.columns || [];
+const columns = state.columns.filter(c => !toDelete.includes(c));
+const rows = state.rows.map(row => {
+const newRow = { ...row };
+
+if (/^\+91-?6[0-9]/.test(phone)) return '"Jio"';
+
+if (/^\+1/.test(phone)) return '"AT&T"';
+
+if (/^\+44/.test(phone)) return '"BT"';
+
+return '"Unknown"';
+
+});
+
+
+
+expr = expr.replace(/today\(\)/g, `"${new Date().toISOString().split('T')[0]}"`);
+
+expr = expr.replace(/now\(\)/g, `"${new Date().toISOString()}"`);
+
+expr = expr.replace(/upper\(([^)]+)\)/g, (_, a) => `(${a}||"").toUpperCase()`);
+
+expr = expr.replace(/lower\(([^)]+)\)/g, (_, a) => `(${a}||"").toLowerCase()`);
+
+expr = expr.replace(/trim\(([^)]+)\)/g, (_, a) => `(${a}||"").trim()`);
+
+expr = expr.replace(/len\(([^)]+)\)/g, (_, a) => `(${a}||"").length`);
+
+
+
+try {
+
+// eslint-disable-next-line no-new-func
+
+return Function(`"use strict"; return (${expr})`)();
+
+} catch {
+
+return null;
+
+}
+
+}
+
+
+
+// ── Step Executors ───────────────────────────────────────────
+
+const steps = {
+
+// Source nodes — build initial dataset
+
+source(node, state, wf) {
+
+if (node.config?.csvText) {
+
+const { columns, rows } = parseCSV(node.config.csvText);
+
+return { columns, rows };
+
+}
+
+if (node.config?.jsonText) {
+
+return parseJSON(node.config.jsonText);
+
+}
+
+// Use uploaded file data if available on workflow
+
+if (wf && wf._uploadedData) {
+
+return { columns: wf._uploadedData.columns, rows: wf._uploadedData.rows };
+
+}
+
+if (node.config?.sampleData && node.config?.columns) {
+
+const columns = node.config.columns;
+
+const rows = node.config.sampleData.map(r => {
+
+const row = {};
+
+columns.forEach((c, i) => row[c] = r[i] !== undefined ? r[i] : '');
+
+return row;
+
+});
+
+return { columns, rows };
+
+}
+
+// Generate minimal sample
+
+return {
+
+columns: ['ID', 'Name', 'DOB', 'Country', 'Phone', 'Amount'],
+
+rows: [
+
+{ ID:'1', Name:'Alice',   DOB:'1990-05-12', Country:'India',   Phone:'+91-9876543210', Amount:'1200' },
+
+{ ID:'2', Name:'Bob',     DOB:'1985-11-23', Country:'USA',     Phone:'+1-2025551234',  Amount:'3400' },
+
+{ ID:'3', Name:'Carol',   DOB:'1992-03-08', Country:'Germany', Phone:'+91-8012345678', Amount:'2100' },
+
+{ ID:'4', Name:'David',   DOB:'1978-07-30', Country:'India',   Phone:'+91-7712345678', Amount:'560'  },
+
+{ ID:'5', Name:'Emma',    DOB:'1995-01-15', Country:'UK',      Phone:'+44-7912345678', Amount:'4200' },
+
+],
+
+};
+
+},
+
+
+
+// Add new column
+
+add_column(node, state) {
+
+const { targetColumn, formula, sourceColumn, subtype } = node.config || {};
+
+if (!targetColumn) return state;
+
+const rows = state.rows.map(row => {
+
+let val;
+
+if (formula) {
+
+val = evalFormula(formula, row);
+
+} else if (sourceColumn && subtype === 'add_column') {
+
+val = dateDiffYears(row[sourceColumn]);
+
+} else {
+
+val = null;
+
+}
+
+return { ...row, [targetColumn]: val };
+
+});
+
+const columns = state.columns.includes(targetColumn)
+
+? state.columns
+
+// Handles fuzzy column matching against actual data columns
+function parsePrompt(text, columns = []) {
+const result = [];
+const t = text.trim();
+
+// ── Helper: case-insensitive fuzzy column lookup ──────────
+const findCol = (name) => {
+if (!name) return name;
+const cleaned = name.trim().replace(/^["']|["']$/g, '').toLowerCase();
+// Exact match first
+let found = columns.find(c => c.toLowerCase() === cleaned);
+if (found) return found;
+// Starts-with match
+found = columns.find(c => c.toLowerCase().startsWith(cleaned));
+if (found) return found;
+// Contains match (both ways)
+found = columns.find(c => c.toLowerCase().includes(cleaned) || cleaned.includes(c.toLowerCase()));
+if (found) return found;
+// Return the raw name as-is (might be a new column)
+return name.trim().replace(/^["']|["']$/g, '');
+};
+
+const findColByPattern = (...patterns) =>
+columns.find(c => patterns.some(p => p.test(c))) || null;
+
+// ── Helper: build condition expression from parsed parts ──
+const buildCondExpr = (condCol, op, condVal) => {
+const opClean = op.trim().toLowerCase().replace(/\s+/g, ' ');
+const numVal = parseFloat(condVal);
+
+return { columns, rows: newRows };
+},
+};
+
+// ── Execute workflow ─────────────────────────────────────────
+function run(workflow) {
+const t0 = Date.now();
+let state = { columns: [], rows: [] };
+const errors = [];
+
+// Topological sort (BFS from source nodes)
+const nodeMap = {};
+workflow.nodes.forEach(n => nodeMap[n.id] = n);
+const inDegree = {};
+workflow.nodes.forEach(n => inDegree[n.id] = 0);
+workflow.edges.forEach(e => { if (inDegree[e.to] !== undefined) inDegree[e.to]++; });
+const queue = workflow.nodes.filter(n => inDegree[n.id] === 0);
+const order = [];
+const visited = new Set();
+while (queue.length) {
+const node = queue.shift();
+if (visited.has(node.id)) continue;
+visited.add(node.id);
+order.push(node);
+workflow.edges.filter(e => e.from === node.id).forEach(e => {
+inDegree[e.to]--;
+if (inDegree[e.to] === 0) queue.push(nodeMap[e.to]);
+});
+}
+// Append any remaining not reached
+workflow.nodes.forEach(n => { if (!visited.has(n.id)) order.push(n); });
+
+const nodeStates = {};
+const defaultState = workflow._uploadedData
+? { columns: workflow._uploadedData.columns, rows: workflow._uploadedData.rows }
+: { columns: [], rows: [] };
+
+// Execute steps
+for (const node of order) {
+try {
+const incoming = workflow.edges.filter(e => e.to === node.id);
+let inputState = null;
+if (incoming.length > 0) {
+// Find the source state from the first incoming connection
+inputState = nodeStates[incoming[0].from];
+}
+// Fallback to default state if no input state is found
+if (!inputState) {
+inputState = { columns: [...defaultState.columns], rows: defaultState.rows.map(r => ({ ...r })) };
+} else {
+// Deep copy the input state to avoid mutating previous node states
+inputState = { columns: [...inputState.columns], rows: inputState.rows.map(r => ({ ...r })) };
+}
+
+const subtype = node.config?.subtype || node.subtype || node.type;
+const executor = steps[subtype] || steps[node.type];
+let outState = inputState;
+if (executor) {
+outState = executor(node, inputState, workflow) || inputState;
+}
+nodeStates[node.id] = outState;
+state = outState; // Keep track of the last executed state
+} catch (err) {
+errors.push(`Node "${node.label}": ${err.message}`);
+}
+}
+
+// Prefer output node's state for final preview if one exists
+const outputNodes = order.filter(n => n.type === 'output');
+if (outputNodes.length > 0) {
+const outNode = outputNodes[outputNodes.length - 1];
+if (nodeStates[outNode.id]) {
+state = nodeStates[outNode.id];
+}
+}
+
+const duration = Date.now() - t0;
+return { success: errors.length === 0, state, duration, errors };
+}
+
+
+const duration = Date.now() - t0;
+return { success: errors.length === 0, state, duration, errors };
+}
+
+// ── AI Prompt Parser ─────────────────────────────────────────
+// Converts natural language to workflow node specs.
+// Handles broad vocabulary: make/set/change/update/mark/assign/turn/flag
+// Handles no-space operators: TRESTBPS>145, age>=18
+// Handles fuzzy column matching against actual data columns
+function parsePrompt(text, columns = []) {
+const result = [];
+const t = text.trim();
+
+// ── Helper: Levenshtein distance for spelling corrections ──
+const levenshtein = (a, b) => {
+const matrix = [];
+for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+for (let i = 1; i <= b.length; i++) {
+for (let j = 1; j <= a.length; j++) {
+if (b.charAt(i - 1) === a.charAt(j - 1)) {
+matrix[i][j] = matrix[i - 1][j - 1];
+} else {
+matrix[i][j] = Math.min(
+matrix[i - 1][j - 1] + 1, // substitution
+matrix[i][j - 1] + 1,     // insertion
+matrix[i - 1][j] + 1      // deletion
+);
+}
+}
+}
+return matrix[b.length][a.length];
+};
+
+// ── Helper: case-insensitive fuzzy column lookup ──────────
+const findCol = (name) => {
+if (!name) return name;
+const cleaned = name.trim().replace(/^["']|["']$/g, '').toLowerCase();
+// Exact match first
+let found = columns.find(c => c.toLowerCase() === cleaned);
+if (found) return found;
+// Starts-with match
+found = columns.find(c => c.toLowerCase().startsWith(cleaned));
+if (found) return found;
+// Contains match (both ways)
+found = columns.find(c => c.toLowerCase().includes(cleaned)
+if (found) return found;
+// Spelling correction (Levenshtein distance <= 2)
+found = columns.find(c => levenshtein(c.toLowerCase(), cleaned) <= 2);
+if (found) return found;
+// Return the raw name as-is (might be a new column)
+return name.trim().replace(/^["']|["']$/g, '');
+};
+
+const findColByPattern = (...patterns) =>
+columns.find(c => patterns.some(p => p.test(c))) || null;
+
+
+// ── Helper: build condition expression from parsed parts ──
+const buildCondExpr = (condCol, op, condVal) => {
+const opClean = op.trim().toLowerCase().replace(/\s+/g, ' ');
+const numVal = parseFloat(condVal);
+const isNum = !isNaN(numVal) && condVal.trim() !== '';
+const quotedVal = isNum ? numVal : JSON.stringify(condVal.trim());
+
+if (opClean === '=' || opClean === '==' || opClean === 'is' || opClean === 'equals' || opClean === 'equal to')
+return `(String({${condCol}}).toLowerCase() === String(${JSON.stringify(condVal.trim())}).toLowerCase())`;
+if (opClean === '!=' || opClean === '<>' || opClean === 'is not' || opClean === 'not equal to' || opClean === 'not equals')
+return `(String({${condCol}}).toLowerCase() !== String(${JSON.stringify(condVal.trim())}).toLowerCase())`;
+if (opClean === '>')
+return `(parseFloat({${condCol}}) > ${numVal})`;
+if (opClean === '<')
+return `(parseFloat({${condCol}}) < ${numVal})`;
+if (opClean === '>=' || opClean === 'gte')
+return `(parseFloat({${condCol}}) >= ${numVal})`;
+if (opClean === '<=' || opClean === 'lte')
+return `(parseFloat({${condCol}}) <= ${numVal})`;
+if (opClean === 'contains' || opClean === 'includes')
+return `(String({${condCol}}).toLowerCase().includes(${JSON.stringify(condVal.trim().toLowerCase())}))`;
+if (opClean === 'starts with' || opClean === 'startswith')
+return `(String({${condCol}}).toLowerCase().startsWith(${JSON.stringify(condVal.trim().toLowerCase())}))`;
+if (opClean === 'ends with' || opClean === 'endswith')
+return `(String({${condCol}}).toLowerCase().endsWith(${JSON.stringify(condVal.trim().toLowerCase())}))`;
+// Fallback: equality
+return `(String({${condCol}}).toLowerCase() === ${JSON.stringify(condVal.trim().toLowerCase())})`;
+};
+
+// ── Helper: normalise an operator word ────────────────────
+const normOp = (s) => {
+const k = s.trim().toLowerCase().replace(/\s+/g,' ');
+if (k === '=' || k === '==' || k === 'is' || k === 'equals' || k === 'equal to') return 'equals';
+if (k === '!=' || k === '<>' || k === 'is not' || k === 'not equal' || k === 'not equal to') return 'not_equals';
+if (k === '>') return 'gt';
+if (k === '<') return 'lt';
+if (k === '>=' || k === 'gte') return 'gte';
+if (k === '<=' || k === 'lte') return 'lte';
+if (k === 'contains' || k === 'includes') return 'contains';
+if (k.startsWith('starts')) return 'starts_with';
+if (k.startsWith('ends')) return 'ends_with';
+return 'equals';
+};
+
+// ── Giant condition string that parses BOTH spaced and no-space operators ──
+//   e.g.:  "age > 60"  OR  "age>60"  OR  "TRESTBPS>=145"
+// Group 1: column name (words, may include spaces before op)
+// Group 2: operator
+// Group 3: value
+const OPS = '(>=|<=|!=|<>|==|=|>|<)';
+const WORD_OPS = '(?:\\s+(?:is not|not equal to|not equals|contains|starts with|ends with|equals|equal to|is|gte|lte)\\s+)';
+const COND_INLINE_RE = new RegExp(
+`([\\w]+(?:\\s+[\\w]+)*)\\s*${OPS}\\s*([\\S]+)` +
+`|([\\w]+(?:\\s+[\\w]+)*)${WORD_OPS.trimEnd().trimStart()}([\\S]+)`,
+'i'
+);
+
+// Parse a condition string like "age > 60" or "TRESTBPS>=145" or "region is North"
+const parseCondition = (s) => {
+// Try symbolic operators first (with or without spaces)
+
+});
+handled = true;
+}
+
+// B. Country → ISO code
+if (!handled && /country.*(?:to|iso|code)|iso.*code|map.*country|convert.*country/i.test(cl)) {
+const col = findColByPattern(/country|nation/i) || 'Country';
+result.push({
+type: 'transform', subtype: 'lookup_map', label: `${col} to ISO Code`,
+return {
+type: 'transform',
+subtype: 'add_column',
+label: `If ${ctxCol} → ${op} ${col}`,
+config: {
+subtype: 'add_column',
+targetColumn: col,
+formula: `${condExpr} ? ((s => ${fnExpr})(${fallback})) : ${fallback}`
+}
+};
+}
+return actionNode;
+};
+
+// ── Helper: Levenshtein distance for spelling corrections ──
+const levenshtein = (a, b) => {
+const matrix = [];
+for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+for (let i = 1; i <= b.length; i++) {
+for (let j = 1; j <= a.length; j++) {
+if (b.charAt(i - 1) === a.charAt(j - 1)) {
+matrix[i][j] = matrix[i - 1][j - 1];
+} else {
+matrix[i][j] = Math.min(
+matrix[i - 1][j - 1] + 1, // substitution
+matrix[i][j - 1] + 1,     // insertion
+matrix[i - 1][j] + 1      // deletion
+);
+}
+}
+}
+return matrix[b.length][a.length];
+};
+
+// ── Helper: case-insensitive fuzzy column lookup ──────────
+const findCol = (name) => {
+if (!name) return name;
+const cleaned = name.trim().replace(/^["']|["']$/g, '').toLowerCase();
+
+// Check context references
+if (currentContextCol && /^(?:that\s+name|that\s+column|this\s+name|this\s+column|it|itself)$/i.test(cleaned)) {
+return currentContextCol;
+}
+
+// Exact match first
+let found = columns.find(c => c.toLowerCase() === cleaned);
+if (found) return found;
+// Starts-with match
+found = columns.find(c => c.toLowerCase().startsWith(cleaned));
+if (found) return found;
+// Contains match (one-way only, prevent incorrect reverse matching)
+found = columns.find(c => c.toLowerCase().includes(cleaned));
+if (found) return found;
+// Spelling correction (Levenshtein distance <= 2)
+found = columns.find(c => levenshtein(c.toLowerCase(), cleaned) <= 2);
+if (found) return found;
+// Return the raw name as-is (might be a new column)
+return name.trim().replace(/^["']|["']$/g, '');
+};
+
+const findColByPattern = (...patterns) =>
+columns.find(c => patterns.some(p => p.test(c))) || null;
+
+
+// ── Helper: build condition expression from parsed parts ──
+const buildCondExpr = (condCol, op, condVal) => {
+const opClean = op.trim().toLowerCase().replace(/\s+/g, ' ');
+const numVal = parseFloat(condVal);
+const isNum = !isNaN(numVal) && condVal.trim() !== '';
+const quotedVal = isNum ? numVal : JSON.stringify(condVal.trim());
+
+if (opClean === '=' || opClean === '==' || opClean === 'is' || opClean === 'equals' || opClean === 'equal to')
+return `(String({${condCol}}).toLowerCase() === String(${JSON.stringify(condVal.trim())}).toLowerCase())`;
+if (opClean === '!=' || opClean === '<>' || opClean === 'is not' || opClean === 'not equal to' || opClean === 'not equals')
+return `(String({${condCol}}).toLowerCase() !== String(${JSON.stringify(condVal.trim())}).toLowerCase())`;
+if (opClean === '>')
+return `(parseFloat({${condCol}}) > ${numVal})`;
+if (opClean === '<')
+return `(parseFloat({${condCol}}) < ${numVal})`;
+if (opClean === '>=' || opClean === 'gte')
+return `(parseFloat({${condCol}}) >= ${numVal})`;
+if (opClean === '<=' || opClean === 'lte')
+return `(parseFloat({${condCol}}) <= ${numVal})`;
+if (opClean === 'contains' || opClean === 'includes')
+return `(String({${condCol}}).toLowerCase().includes(${JSON.stringify(condVal.trim()
+label: `If ${condCol} ${isNot ? 'is not' : 'is'} empty → set ${targetCol} = ${targetVal}`,
+config: {
+subtype: 'add_column', targetColumn: targetCol,
+formula: `${condExpr} ? ${JSON.stringify(targetVal)} : {${targetCol}}`
+// Fallback: equality
+return `(String({${condCol}}).toLowerCase() === ${JSON.stringify(condVal.trim().toLowerCase())})`;
+};
+
+// ── Helper: normalise an operator word ────────────────────
+const normOp = (s) => {
+const k = s.trim().toLowerCase().replace(/\s+/g,' ');
+if (k === '=' || k === '==' || k === 'is' || k === 'equals' || k === 'equal to') return 'equals';
+if (k === '!=' || k === '<>' || k === 'is not' || k === 'not equal' || k === 'not equal to') return 'not_equals';
+if (k === '>') return 'gt';
+if (k === '<') return 'lt';
+if (k === '>=' || k === 'gte') return 'gte';
+if (k === '<=' || k === 'lte') return 'lte';
+if (k === 'contains' || k === 'includes') return 'contains';
+if (k.startsWith('starts')) return 'starts_with';
+if (k.startsWith('ends')) return 'ends_with';
+return 'equals';
+};
+
+// ── Giant condition string that parses BOTH spaced and no-space operators ──
+//   e.g.:  "age > 60"  OR  "age>60"  OR  "TRESTBPS>=145"
+// Group 1: column name (words, may include spaces before op)
+// Group 2: operator
+// Group 3: value
+const OPS = '(>=|<=|!=|<>|==|=|>|<)';
+const WORD_OPS = '(?:\\s+(?:is not|not equal to|not equals|contains|starts with|ends with|equals|equal to|is|gte|lte)\\s+)';
+const COND_INLINE_RE = new RegExp(
+`([\\w]+(?:\\s+[\\w]+)*)\\s*${OPS}\\s*([\\S]+)` +
+`|([\\w]+(?:\\s+[\\w]+)*)${WORD_OPS.trimEnd().trimStart()}([\\S]+)`,
+'i'
+// ── Action verbs: any of these mean "change the value" ────
+const ACT = '(?:set|change|make|update|mark|assign|convert|turn|put|flag|replace|force|write|fill|populate)';
+const ACT_RE = new RegExp(ACT, 'i');
+
+// ── Connector words for the action target / value ─────────
+const CONJ = '(?:to(?:\\s+be)?|as|with|=|:)';
+
+// ── PATTERN 1: IF <cond> THEN <action> ───────────────────
+// e.g. "if age > 60 then make sex female"
+// e.g. "if TRESTBPS>145 then make EXANK to TRUE"
+// e.g. "if Region = North then set Status as Active"
+const ifThenRe = new RegExp(
+`^if\\s+(.+?)\\s+(?:then\\s+)?${ACT}\\s+([\\w\\s]+?)\\s+${CONJ}\\s*["']?([^"']+?)["']?\\s*$`, 'i'
+);
+// Also: "if <cond> then <action> <col> <val>" (no "to")
+const ifThenRe2 = new RegExp(
+`^if\\s+(.+?)\\s+(?:then\\s+)?${ACT}\\s+([\\w]+)\\s+(\\S+)\\s*$`, 'i'
+);
+
+let condMatched = false;
+
+const tryIfThen = (m, condStr, targetStr, valStr) => {
+const cond = parseCondition(condStr.trim());
+if (!cond) return false;
+const targetCol = findCol(targetStr.trim());
+const targetVal = valStr.trim().replace(/^["']|["']$/g, '');
+const condExpr = buildCondExpr(cond.condCol, cond.op, cond.condVal);
+const label = `If ${cond.condCol} ${cond.op} ${cond.condVal} → set ${targetCol} = ${targetVal}`;
+result.push({
+type: 'transform', subtype: 'add_column', label,
+
+return true;
+
+}
+
+});
+
+
+
+const columns = [...state.columns];
+
+if (action === 'flag') {
+
+if (!columns.includes('_validation_status')) columns.push('_validation_status');
+
+if (!columns.includes('_validation_details')) columns.push('_validation_details');
+
+}
+
+
+
+return { columns, rows: newRows };
+
+},
+
+};
+
+
+
+// ── Execute workflow ─────────────────────────────────────────
+
+function run(workflow) {
+
+const t0 = Date.now();
+
+let state = { columns: [], rows: [] };
+
+const errors = [];
+
+
+
+// Topological sort (BFS from source nodes)
+
+const nodeMap = {};
+
+workflow.nodes.forEach(n => nodeMap[n.id] = n);
+
+const inDegree = {};
+
+workflow.nodes.forEach(n => inDegree[n.id] = 0);
+
+workflow.edges.forEach(e => { if (inDegree[e.to] !== undefined) inDegree[e.to]++; });
+
+const queue = workflow.nodes.filter(n => inDegree[n.id] === 0);
+
+const order = [];
+
+const visited = new Set();
+
+while (queue.length) {
+
+const node = queue.shift();
+
+if (visited.has(node.id)) continue;
+
+visited.add(node.id);
+
+order.push(node);
+
+workflow.edges.filter(e => e.from === node.id).forEach(e => {
+
+inDegree[e.to]--;
+
+if (inDegree[e.to] === 0) queue.push(nodeMap[e.to]);
+
+});
+
+}
+
+// Append any remaining not reached
+
+workflow.nodes.forEach(n => { if (!visited.has(n.id)) order.push(n); });
+
+
+
+const nodeStates = {};
+
+const defaultState = workflow._uploadedData
+
+? { columns: workflow._uploadedData.columns, rows: workflow._uploadedData.rows }
+
+: { columns: [], rows: [] };
+
+
+
+// Execute steps
+
+for (const node of order) {
+
+try {
+
+const incoming = workflow.edges.filter(e => e.to === node.id);
+
+let inputState = null;
+
+if (incoming.length > 0) {
+
+// Find the source state from the first incoming connection
+
+inputState = nodeStates[incoming[0].from];
+
+}
+
+// Fallback to default state if no input state is found
+
+if (!inputState) {
+
+inputState = { columns: [...defaultState.columns], rows: defaultState.rows.map(r => ({ ...r })) };
+
+} else {
+
+// Deep copy the input state to avoid mutating previous node states
+
+inputState = { columns: [...inputState.columns], rows: inputState.rows.map(r => ({ ...r })) };
+
+}
+
+
+
+const subtype = node.config?.subtype || node.subtype || node.type;
+
+let executor = steps[subtype] || steps[node.type];
+
+if (node.type === 'source') {
+
+executor = steps['source'];
+
+} else if (node.type === 'output') {
+
+executor = steps['output'];
+
+}
+
+let outState = inputState;
+
+if (executor) {
+
+outState = executor(node, inputState, workflow) || inputState;
+
+}
+
+nodeStates[node.id] = outState;
+
+state = outState; // Keep track of the last executed state
+
+} catch (err) {
+
+errors.push(`Node "${node.label}": ${err.message}`);
+
+}
+
+}
+
+
+
+// Prefer output node's state for final preview if one exists
+
+const outputNodes = order.filter(n => n.type === 'output');
+
+if (outputNodes.length > 0) {
+
+const outNode = outputNodes[outputNodes.length - 1];
+
+if (nodeStates[outNode.id]) {
+
+state = nodeStates[outNode.id];
+
+}
+
+}
+
+
+
+const duration = Date.now() - t0;
+
+return { success: errors.length === 0, state, duration, errors };
+
+}
+
+
+
+// ── AI Prompt Parser ─────────────────────────────────────────
+
+// Converts natural language to workflow node specs.
+
+// Handles broad vocabulary: make/set/change/update/mark/assign/turn/flag
+
+// Handles no-space operators: TRESTBPS>145, age>=18
+
+// Handles fuzzy column matching against actual data columns
+
+function parsePrompt(text, columns = []) {
+const result = [];
+const t = text.trim();
+
+let currentContextCol = null;
+let conditionExpr = null;
+let actionClause = t;
+
+// Check for "in <col> column there is <val> <action>"
+let condPrefixMatch = t.match(/^(?:in|for|where)\s+([\w\s]+?)(?:\s+column)?\s+(?:there\s+is|is|has|=)\s+([\w\s"']+?)(?:\s+then|,|\s)+(.*)$/i);
+const targetCol = findCol(inlineCond[4]);
+const targetVal = inlineCond[5].trim();
+const condExpr = buildCondExpr(cond.condCol, cond.op, cond.condVal);
+result.push({
+type: 'transform', subtype: 'add_column',
+label: `If ${cond.condCol} ${cond.op} ${cond.condVal} → set ${targetCol} = ${targetVal}`,
+config: {
+subtype: 'add_column', targetColumn: targetCol,
+formula: `${condExpr} ? ${JSON.stringify(targetVal)} : {${targetCol}}`
+}
+});
+handled = true;
+}
+}
+}
+
+// L. Math / Formula Column detection
+// L1. Explicit formula: "create column tax as Amount * 0.18" or "add column tax = Amount * 0.18"
+if (!handled) {
+const explicitFormulaMatch = clause.match(/(?:create|add|new)\s+(?:column\s+)?(?:named|called\s+)?([\w\s]+?)\s*(?:as|=|\bwith formula\b)\s*(.+)$/i);
+
+// J. Generic unconditional column set: "set Col to/as val" / "make Col val" / "mark Col as val"
+if (!handled) {
+const gm = clause.match(new RegExp(`^${ACT}\\s+([\\w\\s]+?)\\s+${CONJ}\\s*["']?([^"']+?)["']?\\s*$`, 'i')) ||
+clause.match(/^(?:make|mark|assign)\s+([\w\s]+?)\s+["']?([^"']+?)["']?\s*$/i);
+if (gm) {
+const condExpr = buildCondExpr(cond.condCol, cond.op, cond.condVal);
+result.push({
+type: 'transform', subtype: 'add_column',
+label: `If ${cond.condCol} ${cond.op} ${cond.condVal} → set ${targetCol} = ${targetVal}`,
+config: {
+subtype: 'add_column', targetColumn: targetCol,
+formula: `${condExpr} ? ${JSON.stringify(targetVal)} : {${targetCol}}`
+}
+});
+handled = true;
+}
+}
+}
+
+// L. Math / Formula Column detection
+// L1. Explicit formula: "create column tax as Amount * 0.18" or "add column tax = Amount * 0.18"
+if (!handled) {
+const explicitFormulaMatch = clause.match(/(?:create|add|new)\s+(?:column\s+)?(?:named|called\s+)?([\w\s]+?)\s*(?:as|=|\bwith formula\b)\s*(.+)$/i);
+if (explicitFormulaMatch) {
+const targetCol = explicitFormulaMatch[1].trim();
+let rawFormula = explicitFormulaMatch[2].trim();
+// Replace raw column names with curly brackets
+columns.forEach(col => {
+const re = new RegExp(`\\b${col.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+rawFormula = rawFormula.replace(re, `{${col}}`);
+});
+result.push({
+type: 'transform', subtype: 'add_column', label: `Add Column: ${targetCol}`,
+config: { subtype: 'add_column', targetColumn: targetCol, formula: rawFormula }
+});
+handled = true;
+}
+}
+
+// L1. Explicit formula: "create column tax as Amount * 0.18" or "add column tax = Amount * 0.18"
+if (!handled) {
+const explicitFormulaMatch = clause.match(/(?:create|add|new)\s+(?:column\s+)?(?:named|called\s+)?([\w\s]+?)\s*(?:as|=|\bwith formula\b)\s*(.+)$/i);
+if (explicitFormulaMatch) {
+const targetCol = explicitFormulaMatch[1].trim();
+let rawFormula = explicitFormulaMatch[2].trim();
+// Replace raw column names with curly brackets
+columns.forEach(col => {
+const re = new RegExp(`\\b${col.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+rawFormula = rawFormula.replace(re, `{${col}}`);
+const re = new RegExp(`\\b${col.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+rawFormula = rawFormula.replace(re, `{${col}}`);
+});
+result.push({
+type: 'transform', subtype: 'add_column', label: `Add Column: ${targetCol}`,
+config: { subtype: 'add_column', targetColumn: targetCol, formula: rawFormula }
+});
+handled = true;
+}
+}
+
+// L2. Math operation: "add 5 to AGE", "add CHOL in AGE", "plus 5 to AGE"
+if (!handled) {
+const addMatch = clause.match(/(?:add|adding|plus)\s+([\w\s]+?|[-\d\.]+)\s+(?:to|in|for|on)\s+([\w\s]+)/i);
+if (addMatch) {
+const val1 = addMatch[1].trim();
+const col2 = findCol(addMatch[2]);
+const isNum = !isNaN(parseFloat(val1));
+let formula, label;
+if (isNum) {
+formula = `(parseFloat({${col2}}) || 0) + ${parseFloat(val1)}`;
+label = `Add ${parseFloat(val1)} to ${col2}`;
+} else {
+const col1 = findCol(val1);
+formula = `(parseFloat({${col2}}) || 0) + (parseFloat({${col1}}) || 0)`;
+label = `Add ${col1} to ${col2}`;
+}
+result.push({
+type: 'transform', subtype: 'add_column', label,
+config: { subtype: 'add_column', targetColumn: `${col2}_calc`, formula }
+});
+handled = true;
+}
+}
+
+// L3. Math operation: "subtract 5 from AGE", "subtract CHOL from AGE"
+if (!handled) {
+const subMatch = clause.match(/(?:subtract|subtracting|minus|sub)\s+([\w\s]+?|[-\d\.]+)\s+(?:from|in|for|on)\s+([\w\s]+)/i);
+if (subMatch) {
+const val1 = subMatch[1].trim();
+const col2 = findCol(subMatch[2]);
+
+// MISSING LINE 1063
+// MISSING LINE 1064
+formula = `(parseFloat({${col2}}) || 0) - ${parseFloat(val1)}`;
+label = `Subtract ${parseFloat(val1)} from ${col2}`;
+} else {
+const col1 = findCol(val1);
+formula = `(parseFloat({${col2}}) || 0) - (parseFloat({${col1}}) || 0)`;
+label = `Subtract ${col1} from ${col2}`;
+}
+result.push({
+type: 'transform', subtype: 'add_column', label,
+config: { subtype: 'add_column', targetColumn: `${col2}_calc`, formula }
+});
+handled = true;
+}
+}
+
+// L4. Math operation: "multiply AGE by 5", "multiply AGE by CHOL"
+if (!handled) {
+const mulMatch = clause.match(/(?:multiply|multiplying|mul)\s+([\w\s]+)\s+by\s+([\w\s]+?|[-\d\.]+)/i);
+if (mulMatch) {
+const col1 = findCol(mulMatch[1]);
+const val2 = mulMatch[2].trim();
+const isNum = !isNaN(parseFloat(val2));
+let formula, label;
+if (isNum) {
+formula = `(parseFloat({${col1}}) || 0) * ${parseFloat(val2)}`;
+label = `Multiply ${col1} by ${parseFloat(val2)}`;
+} else {
+const col2 = findCol(val2);
+formula = `(parseFloat({${col1}}) || 0) * (parseFloat({${col2}}) || 0)`;
+label = `Multiply ${col1} by ${col2}`;
+}
+result.push({
+type: 'transform', subtype: 'add_column', label,
+config: { subtype: 'add_column', targetColumn: `${col1}_calc`, formula }
+});
+handled = true;
+}
+}
+
+// L5. Math operation: "divide AGE by 5", "divide AGE by CHOL"
+if (!handled) {
+const divMatch = clause.match(/(?:divide|dividing|div)\s+([\w\s]+)\s+by\s+([\w\s]+?|[-\d\.]+)/i);
+if (divMatch) {
+const col1 = findCol(divMatch[1]);
+const val2 = divMatch[2].trim();
+const isNum = !isNaN(parseFloat(val2));
+let formula, label;
+if (isNum) {
+formula = `(parseFloat({${col1}}) || 0) / ${parseFloat(val2)}`;
+label = `Divide ${col1} by ${parseFloat(val2)}`;
+} else {
+const col2 = findCol(val2);
+formula = `(parseFloat({${col1}}) || 0) / (parseFloat({${col2}}) || 0 || 1)`;
+label = `Divide ${col1} by ${col2}`;
+}
+result.push({
+type: 'transform', subtype: 'add_column', label,
+config: { subtype: 'add_column', targetColumn: `${col1}_calc`, formula }
+});
+handled = true;
+}
+}
+
+// L6. Simple inline math: "AGE + 5", "AGE + CHOL" (where AGE and CHOL are columns)
+if (!handled) {
+const inlineMath = clause.match(/^([\w\s]+?)\s*([\+\-\*\/])\s*([\w\s]+?)\s*$/);
+if (inlineMath) {
+const col1 = findCol(inlineMath[1]);
+const op = inlineMath[2];
+
+// MISSING LINE 1135
+// MISSING LINE 1136
+// MISSING LINE 1137
+// MISSING LINE 1138
+} else {
+const col2 = findCol(val2);
+formula = `(parseFloat({${col1}}) || 0) ${op} (parseFloat({${col2}}) || 0)`;
+}
+result.push({
+type: 'transform', subtype: 'add_column', label,
+config: { subtype: 'add_column', targetColumn: `${col1}_calc`, formula }
+});
+handled = true;
+}
+}
+
+
+// M. Schema mapping node detection
+if (!handled && /map\s+(?:fields|columns)|schema\s+map|mapping/i.test(cl)) {
+result.push({
+type: 'transform', subtype: 'mapping', label: 'Data Mapper',
+config: { subtype: 'mapping', mappings: [], keepUnmapped: true }
+});
+handled = true;
+}
+
+// N. Rule engine node detection
+if (!handled && /rule\s+engine|validation|validate\s+(?:data|rows)|rules/i.test(cl)) {
+result.push({
+type: 'filter', subtype: 'rule_engine', label: 'Rule Engine',
+config: { subtype: 'rule_engine', rules: [], groupOp: 'AND', action: 'flag', errorMessage: 'Validation failed' }
+});
+handled = true;
+}
+}
+
+}
+
+// Deduplicate by subtype + targetColumn/column
+const seen = new Set();
+return result.filter(n => {
+const key = (n.config?.subtype||n.subtype||n.type) + '_' + (n.config?.targetColumn || n.config?.column || n.config?.sourceColumn || '');
+if (seen.has(key)) return false;
+seen.add(key);
+return true;
+});
