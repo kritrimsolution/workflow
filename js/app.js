@@ -228,8 +228,11 @@ function initParticles() {
 }
 
 // ── App Init ─────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  // Seed demo data
+document.addEventListener('DOMContentLoaded', async () => {
+  // Initialize Database tables and load .env
+  await Storage.init();
+
+  // Seed demo data if database is empty
   Storage.seedIfEmpty();
 
   // Start particles

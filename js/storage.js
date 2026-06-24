@@ -1,5 +1,5 @@
 /* ================================================================
-   storage.js — localStorage CRUD for workflows, logs, auth
+   storage.js — Sync-through PostgreSQL & localStorage cache storage
    ================================================================ */
 
 const Storage = (() => {
@@ -9,7 +9,219 @@ const Storage = (() => {
     SESSION: 'wf_session',
   };
 
-  // ── Helpers ─────────────────────────────────────────────────
+  const dbConfig = {
+    connectionString: '',
+    url: ''
+  };
+
+  // ── Environment & DB Core ─────────────────────────────────────
+  async function loadEnv() {
+    try {
+      const response = await fetch('/.env');
+      if (!response.ok) {
+        const response2 = await fetch('.env');
+        if (!response2.ok) throw new Error('Failed to fetch .env');
+        return parseEnv(await response2.text());
+      }
+      return parseEnv(await response.text());
+    } catch (e) {
+      console.warn('Could not load .env file, using defaults:', e);
+      return {};
+    }
+  }
+
+  function parseEnv(text) {
+    const env = {};
+    const lines = text.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const idx = trimmed.indexOf('=');
+      if (idx === -1) continue;
+      const key = trimmed.substring(0, idx).trim();
+      let val = trimmed.substring(idx + 1).trim();
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.substring(1, val.length - 1);
+      }
+      env[key] = val;
+    }
+    return env;
+  }
+
+  async function dbQuery(sql, params = []) {
+    if (!dbConfig.connectionString) {
+      throw new Error('Database connection string is empty.');
+    }
+    const res = await fetch(dbConfig.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Neon-Connection-String': dbConfig.connectionString
+      },
+      body: JSON.stringify({ query: sql, params })
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Database query failed: ${errText}`);
+    }
+    return await res.json();
+  }
+
+  function bgQuery(sql, params = []) {
+    dbQuery(sql, params).catch(err => {
+      console.error('Background DB write failed for query:', sql, 'Error:', err);
+    });
+  }
+
+  // ── Database to JS Mappers ───────────────────────────────────
+  function dbRowToWorkflow(row) {
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      nodes: row.nodes ? JSON.parse(row.nodes) : [],
+      edges: row.edges ? JSON.parse(row.edges) : [],
+      nodePositions: row.node_positions ? JSON.parse(row.node_positions) : {},
+      published: !!row.published,
+      shareToken: row.share_token,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      runCount: parseInt(row.run_count || 0, 10),
+      lastRun: row.last_run,
+      status: row.status,
+      uploadedData: row.uploaded_data ? JSON.parse(row.uploaded_data) : null
+    };
+  }
+
+  function workflowToDbRow(wf) {
+    return {
+      id: wf.id,
+      name: wf.name || 'Untitled Workflow',
+      description: wf.description || '',
+      nodes: JSON.stringify(wf.nodes || []),
+      edges: JSON.stringify(wf.edges || []),
+      node_positions: JSON.stringify(wf.nodePositions || {}),
+      published: !!wf.published,
+      share_token: wf.shareToken || null,
+      created_at: wf.createdAt,
+      updated_at: wf.updatedAt,
+      run_count: wf.runCount || 0,
+      last_run: wf.lastRun || null,
+      status: wf.status || 'draft',
+      uploaded_data: wf.uploadedData ? JSON.stringify(wf.uploadedData) : null
+    };
+  }
+
+  function dbRowToLog(row) {
+    return {
+      id: row.id,
+      workflowId: row.workflow_id,
+      status: row.status,
+      startTime: row.start_time,
+      durationMs: parseInt(row.duration_ms || 0, 10),
+      outputRows: parseInt(row.output_rows || 0, 10),
+      error: row.error
+    };
+  }
+
+  function dbRowToUser(row) {
+    return {
+      username: row.username,
+      password: row.password,
+      role: row.role,
+      displayName: row.display_name
+    };
+  }
+
+  // ── Database Initialization ──────────────────────────────────
+  async function init() {
+    const env = await loadEnv();
+    window.env = env;
+
+    const dbUrl = env.DATABASE_URL || 'postgresql://neondb_owner:npg_raOEb8sH5pfZ@ep-dawn-forest-aidva6wp-pooler.c-4.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
+    dbConfig.connectionString = dbUrl;
+    const hostMatch = dbUrl.match(/@([^/:]+)/);
+    const host = hostMatch ? hostMatch[1] : '';
+    dbConfig.url = `https://${host}/sql`;
+
+    try {
+      console.log('Initializing database tables...');
+      await dbQuery(`
+        CREATE TABLE IF NOT EXISTS users (
+          username VARCHAR(50) PRIMARY KEY,
+          password VARCHAR(100),
+          role VARCHAR(50),
+          display_name VARCHAR(100)
+        )
+      `);
+
+      await dbQuery(`
+        CREATE TABLE IF NOT EXISTS workflows (
+          id VARCHAR(50) PRIMARY KEY,
+          name VARCHAR(255),
+          description TEXT,
+          nodes TEXT,
+          edges TEXT,
+          node_positions TEXT,
+          published BOOLEAN,
+          share_token VARCHAR(255),
+          created_at VARCHAR(50),
+          updated_at VARCHAR(50),
+          run_count INTEGER,
+          last_run VARCHAR(50),
+          status VARCHAR(50),
+          uploaded_data TEXT
+        )
+      `);
+
+      await dbQuery(`
+        CREATE TABLE IF NOT EXISTS run_logs (
+          id VARCHAR(50) PRIMARY KEY,
+          workflow_id VARCHAR(50),
+          status VARCHAR(50),
+          start_time VARCHAR(50),
+          duration_ms INTEGER,
+          output_rows INTEGER,
+          error TEXT
+        )
+      `);
+
+      // Seed default users if empty
+      const usersCheck = await dbQuery('SELECT COUNT(*) FROM users');
+      const usersCount = parseInt(usersCheck.rows[0].count, 10);
+      if (usersCount === 0) {
+        console.log('Seeding default users...');
+        await dbQuery(`
+          INSERT INTO users (username, password, role, display_name) VALUES
+          ('admin', 'admin123', 'admin', 'Admin'),
+          ('user', 'user123', 'user', 'Viewer')
+        `);
+      }
+
+      // Fetch all data from DB to local storage cache
+      console.log('Syncing data from PostgreSQL to local storage cache...');
+      const usersRes = await dbQuery('SELECT * FROM users');
+      set('wf_users', usersRes.rows.map(dbRowToUser));
+
+      const wfsRes = await dbQuery('SELECT * FROM workflows');
+      set(KEYS.WORKFLOWS, wfsRes.rows.map(dbRowToWorkflow));
+
+      const logsRes = await dbQuery('SELECT * FROM run_logs');
+      set(KEYS.LOGS, logsRes.rows.map(dbRowToLog));
+
+      console.log('Database state synchronized successfully.');
+    } catch (err) {
+      console.error('Failed to initialize database tables or sync data. Using local storage fallback.', err);
+      if (!get('wf_users')) {
+        set('wf_users', [
+          { username: 'admin', password: 'admin123', role: 'admin', displayName: 'Admin' },
+          { username: 'user', password: 'user123', role: 'user', displayName: 'Viewer' }
+        ]);
+      }
+    }
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────
   function get(key) {
     try { return JSON.parse(localStorage.getItem(key) || 'null'); }
     catch { return null; }
@@ -59,6 +271,18 @@ const Storage = (() => {
       };
       workflows.push(wf);
       set(KEYS.WORKFLOWS, workflows);
+
+      // Write-through to Postgres
+      const dbRow = workflowToDbRow(wf);
+      bgQuery(`
+        INSERT INTO workflows (id, name, description, nodes, edges, node_positions, published, share_token, created_at, updated_at, run_count, last_run, status, uploaded_data)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      `, [
+        dbRow.id, dbRow.name, dbRow.description, dbRow.nodes, dbRow.edges, dbRow.node_positions,
+        dbRow.published, dbRow.share_token, dbRow.created_at, dbRow.updated_at, dbRow.run_count,
+        dbRow.last_run, dbRow.status, dbRow.uploaded_data
+      ]);
+
       return wf;
     },
 
@@ -72,6 +296,22 @@ const Storage = (() => {
         updatedAt: new Date().toISOString(),
       };
       set(KEYS.WORKFLOWS, workflows);
+
+      // Write-through to Postgres
+      const wf = workflows[idx];
+      const dbRow = workflowToDbRow(wf);
+      bgQuery(`
+        UPDATE workflows SET
+          name = $1, description = $2, nodes = $3, edges = $4, node_positions = $5,
+          published = $6, share_token = $7, updated_at = $8, run_count = $9,
+          last_run = $10, status = $11, uploaded_data = $12
+        WHERE id = $13
+      `, [
+        dbRow.name, dbRow.description, dbRow.nodes, dbRow.edges, dbRow.node_positions,
+        dbRow.published, dbRow.share_token, dbRow.updated_at, dbRow.run_count,
+        dbRow.last_run, dbRow.status, dbRow.uploaded_data, dbRow.id
+      ]);
+
       return workflows[idx];
     },
 
@@ -92,6 +332,10 @@ const Storage = (() => {
       // also remove logs
       const logs = RunLogs.all().filter(l => l.workflowId !== id);
       set(KEYS.LOGS, logs);
+
+      // Write-through to Postgres
+      bgQuery('DELETE FROM workflows WHERE id = $1', [id]);
+      bgQuery('DELETE FROM run_logs WHERE workflow_id = $1', [id]);
     },
 
     save(id, nodes, edges, nodePositions, uploadedData) {
@@ -106,6 +350,22 @@ const Storage = (() => {
       if (idx === -1) return null;
       workflows[idx] = { ...wf, updatedAt: new Date().toISOString() };
       set(KEYS.WORKFLOWS, workflows);
+
+      // Write-through to Postgres
+      const updatedWf = workflows[idx];
+      const dbRow = workflowToDbRow(updatedWf);
+      bgQuery(`
+        UPDATE workflows SET
+          name = $1, description = $2, nodes = $3, edges = $4, node_positions = $5,
+          published = $6, share_token = $7, updated_at = $8, run_count = $9,
+          last_run = $10, status = $11, uploaded_data = $12
+        WHERE id = $13
+      `, [
+        dbRow.name, dbRow.description, dbRow.nodes, dbRow.edges, dbRow.node_positions,
+        dbRow.published, dbRow.share_token, dbRow.updated_at, dbRow.run_count,
+        dbRow.last_run, dbRow.status, dbRow.uploaded_data, dbRow.id
+      ]);
+
       return workflows[idx];
     },
   };
@@ -131,9 +391,17 @@ const Storage = (() => {
         error: error || null,
       };
       logs.unshift(log);
-      // keep last 50 per workflow
       const filtered = logs.slice(0, 200);
       set(KEYS.LOGS, filtered);
+
+      // Write-through to Postgres
+      bgQuery(`
+        INSERT INTO run_logs (id, workflow_id, status, start_time, duration_ms, output_rows, error)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `, [
+        log.id, log.workflowId, log.status, log.startTime, log.durationMs, log.outputRows, log.error
+      ]);
+
       // update workflow run stats
       Workflows.update(workflowId, {
         runCount: (Workflows.get(workflowId)?.runCount || 0) + 1,
@@ -141,6 +409,11 @@ const Storage = (() => {
       });
       return log;
     },
+  };
+
+  // ── Users ────────────────────────────────────────────────────
+  const Users = {
+    all() { return get('wf_users') || []; }
   };
 
   // ── Session ──────────────────────────────────────────────────
@@ -210,7 +483,7 @@ const Storage = (() => {
     }
   }
 
-  return { Workflows, RunLogs, Session, seedIfEmpty, uid };
+  return { init, Workflows, RunLogs, Users, Session, seedIfEmpty, uid };
 })();
 
 window.Storage = Storage;

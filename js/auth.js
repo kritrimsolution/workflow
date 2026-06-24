@@ -3,13 +3,9 @@
    ================================================================ */
 
 const Auth = (() => {
-  const USERS = [
-    { username: 'admin', password: 'admin123', role: 'admin', displayName: 'Admin' },
-    { username: 'user',  password: 'user123',  role: 'user',  displayName: 'Viewer' },
-  ];
-
   function login(username, password) {
-    const user = USERS.find(u =>
+    const users = Storage.Users.all();
+    const user = users.find(u =>
       u.username.toLowerCase() === username.toLowerCase() &&
       u.password === password
     );
