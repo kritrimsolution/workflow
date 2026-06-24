@@ -70,6 +70,9 @@ const Storage = (() => {
   function bgQuery(sql, params = []) {
     dbQuery(sql, params).catch(err => {
       console.error('Background DB write failed for query:', sql, 'Error:', err);
+      if (window.UI && typeof window.UI.toast === 'function') {
+        window.UI.toast(`Database save failed: ${err.message}`, 'error');
+      }
     });
   }
 
